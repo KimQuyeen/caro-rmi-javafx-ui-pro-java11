@@ -7,6 +7,7 @@ import java.rmi.RemoteException;
 import java.util.List;
 
 public interface ClientCallback extends Remote {
+void onBoardReset(GameSnapshot snapshot) throws RemoteException;
 
     // -------- Global events --------
     void onGlobalChat(ChatMessage msg) throws RemoteException;

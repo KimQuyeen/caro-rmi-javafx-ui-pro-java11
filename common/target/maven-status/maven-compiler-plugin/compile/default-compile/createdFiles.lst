@@ -4,6 +4,7 @@ vn/edu/demo/caro/common/rmi/LobbyService.class
 vn/edu/demo/caro/common/rmi/AdminService.class
 vn/edu/demo/caro/common/model/Enums.class
 vn/edu/demo/caro/common/model/FriendRequest.class
+vn/edu/demo/caro/common/model/GameSnapshot.class
 vn/edu/demo/caro/common/model/GameStart.class
 vn/edu/demo/caro/common/model/UserProfile.class
 vn/edu/demo/caro/common/util/GameRules.class

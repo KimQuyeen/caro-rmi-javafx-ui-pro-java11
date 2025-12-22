@@ -32,10 +32,10 @@
     <Label text="Bàn cờ" styleClass="h2"/>
 
     <ScrollPane fx:id="spBoard"
-                fitToWidth="true"
-                fitToHeight="true"
-                VBox.vgrow="ALWAYS"
-                pannable="true">
+            fitToWidth="false"
+            fitToHeight="false"
+            pannable="true">
+
         <content>
             <GridPane fx:id="gridBoard" hgap="2" vgap="2">
                 <padding>

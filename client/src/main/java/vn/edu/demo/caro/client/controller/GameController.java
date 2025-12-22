@@ -14,6 +14,7 @@ import vn.edu.demo.caro.common.model.ChatMessage;
 import vn.edu.demo.caro.common.model.Enums.GameEndReason;
 import vn.edu.demo.caro.common.model.Enums.Mark;
 import vn.edu.demo.caro.common.model.GameEnd;
+import vn.edu.demo.caro.common.model.GameSnapshot;
 import vn.edu.demo.caro.common.model.GameStart;
 import vn.edu.demo.caro.common.model.GameUpdate;
 import vn.edu.demo.caro.common.model.Move;
@@ -43,7 +44,6 @@ public class GameController implements WithContext {
     // ===== board state =====
     private int boardSize = 15;
 
-    // Mỗi ô: StackPane chứa Button (click) + Label (vẽ X/O)
     private StackPane[][] cellPanes;
     private Button[][] cellButtons;
     private Label[][] cellMarks;
@@ -55,7 +55,7 @@ public class GameController implements WithContext {
     private String opponent = "?";
     private boolean finished = false;
 
-    private boolean aiEnabled = false; // nếu chưa dùng AI thì để false
+    private boolean aiEnabled = false;
 
     @Override
     public void init(AppContext ctx) {
@@ -152,23 +152,17 @@ public class GameController implements WithContext {
         refreshHeader();
     }
 
-    public void onGameUpdate(GameUpdate update) {
-        if (update == null || finished) return;
+   public void onGameUpdate(GameUpdate update) {
+    if (update == null || finished) return;
 
-        Platform.runLater(() -> {
-            applyMoveIfPossible(update.getMove(), update.getMark());
-            myTurn = ctx.username.equals(update.getNextTurnUser());
-            refreshHeader();
-        });
+    Platform.runLater(() -> {
+        applyMoveIfPossible(update.getMove(), update.getMark());
+        myTurn = ctx.username.equals(update.getNextTurnUser());
+        setBoardEnabled(myTurn);
+        refreshHeader();
+    });
+}
 
-        try {
-            System.out.println("[UPDATE] mark=" + update.getMark()
-                    + " by=" + update.getMove().getBy()
-                    + " next=" + update.getNextTurnUser()
-                    + " r=" + update.getMove().getRow()
-                    + " c=" + update.getMove().getCol());
-        } catch (Exception ignored) {}
-    }
 
     public void onGameEnd(GameEnd end) {
         if (finished) return;
@@ -190,142 +184,132 @@ public class GameController implements WithContext {
     // ===== board =====
 
     private void setupBoard(int size) {
-    if (gridBoard == null) return;
+        if (gridBoard == null) return;
 
-    gridBoard.setManaged(true);
-    gridBoard.setVisible(true);
-    
-    // Reset Board
-    boardSize = size;
-    board = new Mark[size][size];
-    cellPanes = new StackPane[size][size];
-    cellButtons = new Button[size][size];
-    cellMarks = new Label[size][size];
+        gridBoard.setManaged(true);
+        gridBoard.setVisible(true);
 
-    for (int r = 0; r < size; r++) {
-        for (int c = 0; c < size; c++) board[r][c] = Mark.EMPTY;
-    }
+        boardSize = size;
+        board = new Mark[size][size];
+        cellPanes = new StackPane[size][size];
+        cellButtons = new Button[size][size];
+        cellMarks = new Label[size][size];
 
-    gridBoard.getChildren().clear();
-    gridBoard.getColumnConstraints().clear();
-    gridBoard.getRowConstraints().clear();
+        for (int r = 0; r < size; r++) {
+            for (int c = 0; c < size; c++) board[r][c] = Mark.EMPTY;
+        }
 
-    // --- SỬA Ở ĐÂY: Dùng Class CSS thay vì setStyle inline ---
-    gridBoard.getStyleClass().add("game-grid"); 
-    // gridBoard.setGridLinesVisible(true); // Bật lên nếu muốn debug khung
+        gridBoard.getChildren().clear();
+        gridBoard.getColumnConstraints().clear();
+        gridBoard.getRowConstraints().clear();
 
-    // Tính kích thước ô
-    double cellSize = (size <= 12) ? 44 : (size <= 15 ? 38 : 30);
+        if (!gridBoard.getStyleClass().contains("game-grid")) {
+            gridBoard.getStyleClass().add("game-grid");
+        }
 
-    // Tạo Constraints cho cột/dòng
-    for (int c = 0; c < size; c++) {
-        ColumnConstraints cc = new ColumnConstraints(cellSize);
-        gridBoard.getColumnConstraints().add(cc);
-    }
-    for (int r = 0; r < size; r++) {
-        RowConstraints rc = new RowConstraints(cellSize);
-        gridBoard.getRowConstraints().add(rc);
-    }
+        double cellSize = (size <= 12) ? 44 : (size <= 15 ? 38 : 30);
 
-    // Vẽ ô
-    for (int r = 0; r < size; r++) {
         for (int c = 0; c < size; c++) {
-            
-            // 1) Button
-            Button btn = new Button(""); // Text rỗng
-            btn.setMinSize(cellSize, cellSize);
-            btn.setPrefSize(cellSize, cellSize);
-            btn.setMaxSize(cellSize, cellSize);
-            
-            // --- SỬA: Dùng class CSS ---
-            btn.getStyleClass().add("game-cell-btn");
-            
-            final int rr = r;
-            final int cc = c;
-            btn.setOnAction(e -> onCellClick(rr, cc));
-
-            // 2) Label hiển thị
-            Label markLb = new Label("");
-            markLb.setMouseTransparent(true);
-            markLb.setMinSize(cellSize, cellSize);
-            markLb.setPrefSize(cellSize, cellSize);
-            
-            // --- SỬA: Dùng class CSS ---
-            markLb.getStyleClass().add("game-cell-label");
-
-            // 3) StackPane
-            StackPane cell = new StackPane(btn, markLb);
-            cellPanes[r][c] = cell;
-            cellButtons[r][c] = btn;
-            cellMarks[r][c] = markLb;
-
-            gridBoard.add(cell, c, r);
+            ColumnConstraints cc = new ColumnConstraints(cellSize);
+            gridBoard.getColumnConstraints().add(cc);
         }
-    }
-    
-    // Log debug
-    System.out.println("[Board] Setup complete. Size=" + size + " Total Cells=" + (size*size));
-}
-    private void onCellClick(int r, int c) {
-        if (finished || aiEnabled) return;
-
-        if (!myTurn) return;
-        if (ctx.currentRoomId == null || ctx.currentRoomId.isBlank()) return;
-        if (r < 0 || c < 0 || r >= boardSize || c >= boardSize) return;
-        if (board == null || board[r][c] != Mark.EMPTY) return;
-
-        try {
-            System.out.println("[CLICK] room=" + ctx.currentRoomId + " user=" + ctx.username
-                    + " r=" + r + " c=" + c + " myTurn=" + myTurn + " myMark=" + myMark);
-
-            // 1) gọi server
-            ctx.lobby.makeMove(ctx.currentRoomId, ctx.username, r, c);
-
-            // 2) optimistic UI: vẽ luôn
-            applyMoveIfPossible(new Move(r, c, 0, ctx.username), myMark);
-
-            // 3) khóa lượt local
-            myTurn = false;
-            refreshHeader();
-
-        } catch (Exception e) {
-            showInfo("Không hợp lệ", e.getMessage());
+        for (int r = 0; r < size; r++) {
+            RowConstraints rc = new RowConstraints(cellSize);
+            gridBoard.getRowConstraints().add(rc);
         }
+
+        for (int r = 0; r < size; r++) {
+            for (int c = 0; c < size; c++) {
+
+                Button btn = new Button("");
+                btn.setMinSize(cellSize, cellSize);
+                btn.setPrefSize(cellSize, cellSize);
+                btn.setMaxSize(cellSize, cellSize);
+
+                btn.getStyleClass().add("game-cell-btn");
+
+                final int rr = r;
+                final int cc = c;
+                btn.setOnAction(e -> onCellClick(rr, cc));
+
+                Label markLb = new Label("");
+                markLb.setMouseTransparent(true);
+                markLb.setMinSize(cellSize, cellSize);
+                markLb.setPrefSize(cellSize, cellSize);
+
+                markLb.getStyleClass().add("game-cell-label");
+
+                StackPane cell = new StackPane(btn, markLb);
+                cellPanes[r][c] = cell;
+                cellButtons[r][c] = btn;
+                cellMarks[r][c] = markLb;
+
+                gridBoard.add(cell, c, r);
+            }
+        }
+
+        System.out.println("[Board] Setup complete. Size=" + size + " Total Cells=" + (size * size));
     }
 
-   private void applyMoveIfPossible(Move mv, Mark mark) {
-    if (mv == null || mark == null) return;
-
-    int r = mv.getRow();
-    int c = mv.getCol();
+   private void onCellClick(int r, int c) {
+    if (finished || aiEnabled) return;
+    if (!myTurn) return;
+    if (ctx.currentRoomId == null || ctx.currentRoomId.isBlank()) return;
     if (r < 0 || c < 0 || r >= boardSize || c >= boardSize) return;
+    if (board == null || board[r][c] != Mark.EMPTY) return;
 
-    if (board[r][c] != Mark.EMPTY) return;
+    // KHÓA NGAY
+    myTurn = false;
+    setBoardEnabled(false);
+    refreshHeader();
 
-    board[r][c] = mark;
-
-    Label markLb = cellMarks[r][c];
-    Button btn = cellButtons[r][c];
-
-    if (markLb != null) {
-        markLb.setText(mark == Mark.X ? "X" : "O");
-        
-        // --- SỬA: Thêm class màu sắc ---
-        markLb.getStyleClass().removeAll("mark-x", "mark-o"); // Xóa class cũ nếu có
-        if (mark == Mark.X) {
-            markLb.getStyleClass().add("mark-x");
-        } else {
-            markLb.getStyleClass().add("mark-o");
-        }
+    try {
+        ctx.lobby.makeMove(ctx.currentRoomId, ctx.username, r, c);
+        // Không vẽ optimistic, chờ server update/snapshot
+    } catch (Exception e) {
+        // Nếu server từ chối -> mở lại nếu thực sự vẫn là lượt bạn
+        showInfo("Không hợp lệ", e.getMessage());
+        // an toàn: xin mở lại theo trạng thái hiện tại (tạm mở lại để user không bị “kẹt”)
+        // nếu bạn muốn chặt hơn, chỉ mở lại khi message chứa "Lượt hiện tại: <username>"
+        myTurn = true;
+        setBoardEnabled(true);
+        refreshHeader();
     }
-
-    if (btn != null) {
-        btn.setMouseTransparent(true);
-        btn.setOnAction(null);
-    }
-    
-    System.out.println("[DRAW] r=" + r + " c=" + c + " text=" + (mark == Mark.X ? "X" : "O"));
 }
+private void setBoardEnabled(boolean enabled) {
+    if (gridBoard != null) gridBoard.setDisable(!enabled);
+}
+
+
+    private void applyMoveIfPossible(Move mv, Mark mark) {
+        if (mv == null || mark == null) return;
+
+        int r = mv.getRow();
+        int c = mv.getCol();
+        if (r < 0 || c < 0 || r >= boardSize || c >= boardSize) return;
+
+        if (board == null) return;
+        if (board[r][c] != Mark.EMPTY) return;
+
+        board[r][c] = mark;
+
+        Label markLb = cellMarks[r][c];
+        Button btn = cellButtons[r][c];
+
+        if (markLb != null) {
+            markLb.setText(mark == Mark.X ? "X" : "O");
+            markLb.getStyleClass().removeAll("mark-x", "mark-o");
+            if (mark == Mark.X) markLb.getStyleClass().add("mark-x");
+            if (mark == Mark.O) markLb.getStyleClass().add("mark-o");
+        }
+
+        if (btn != null) {
+            btn.setMouseTransparent(true);
+            btn.setOnAction(null);
+        }
+
+        System.out.println("[DRAW] r=" + r + " c=" + c + " text=" + (mark == Mark.X ? "X" : "O"));
+    }
 
     // ===== UI actions =====
 
@@ -419,9 +403,48 @@ public class GameController implements WithContext {
         a.showAndWait();
     }
 
-    // ===== stubs để callback compile =====
-    public void onUndoRequested(String roomId, String from) {}
-    public void onRedoRequested(String roomId, String from) {}
+    // ===== callbacks for undo/redo dialogs =====
+    public void onUndoRequested(String roomId, String from) {
+        if (aiEnabled || finished) return;
+
+        Platform.runLater(() -> {
+            Alert a = new Alert(Alert.AlertType.CONFIRMATION);
+            a.setTitle("Yêu cầu Undo");
+            a.setHeaderText("Undo request");
+            a.setContentText(from + " yêu cầu Undo. Bạn đồng ý?");
+            ButtonType yes = new ButtonType("Đồng ý", ButtonBar.ButtonData.YES);
+            ButtonType no  = new ButtonType("Từ chối", ButtonBar.ButtonData.NO);
+            a.getButtonTypes().setAll(yes, no);
+
+            boolean accept = a.showAndWait().orElse(no) == yes;
+            try {
+                ctx.lobby.respondUndo(roomId, ctx.username, accept);
+            } catch (Exception e) {
+                showInfo("Lỗi", e.getMessage());
+            }
+        });
+    }
+
+    public void onRedoRequested(String roomId, String from) {
+        if (aiEnabled || finished) return;
+
+        Platform.runLater(() -> {
+            Alert a = new Alert(Alert.AlertType.CONFIRMATION);
+            a.setTitle("Yêu cầu Redo");
+            a.setHeaderText("Redo request");
+            a.setContentText(from + " yêu cầu Redo. Bạn đồng ý?");
+            ButtonType yes = new ButtonType("Đồng ý", ButtonBar.ButtonData.YES);
+            ButtonType no  = new ButtonType("Từ chối", ButtonBar.ButtonData.NO);
+            a.getButtonTypes().setAll(yes, no);
+
+            boolean accept = a.showAndWait().orElse(no) == yes;
+            try {
+                ctx.lobby.respondRedo(roomId, ctx.username, accept);
+            } catch (Exception e) {
+                showInfo("Lỗi", e.getMessage());
+            }
+        });
+    }
 
     public void onUndoResult(String roomId, boolean accepted, String message) {
         appendChat(new ChatMessage("SYSTEM", "ROOM:" + roomId, message, Instant.now()));
@@ -438,5 +461,52 @@ public class GameController implements WithContext {
     public void onReturnToLobby(String roomId, String message) {
         appendChat(new ChatMessage("SYSTEM", "ROOM:" + roomId, message, Instant.now()));
         Platform.runLater(this::onBackToMain);
+    }
+
+    // ===== authoritative snapshot apply =====
+    public void applySnapshot(GameSnapshot snap) {
+        if (snap == null) return;
+
+        Platform.runLater(() -> {
+            // guard: nếu chưa init board hoặc size khác => rebuild
+            if (board == null || cellButtons == null || cellMarks == null || snap.getBoardSize() != boardSize) {
+                boardSize = snap.getBoardSize();
+                setupBoard(boardSize);
+            }
+
+            Mark[][] b = snap.getBoard();
+            if (b == null) return;
+
+            for (int r = 0; r < boardSize; r++) {
+                for (int c = 0; c < boardSize; c++) {
+                    Mark m = b[r][c];
+                    board[r][c] = m;
+
+                    Label lb = cellMarks[r][c];
+                    Button btn = cellButtons[r][c];
+
+                    if (lb != null) {
+                        lb.setText(m == Mark.EMPTY ? "" : (m == Mark.X ? "X" : "O"));
+                        lb.getStyleClass().removeAll("mark-x", "mark-o");
+                        if (m == Mark.X) lb.getStyleClass().add("mark-x");
+                        if (m == Mark.O) lb.getStyleClass().add("mark-o");
+                    }
+
+                    if (btn != null) {
+                        boolean empty = (m == Mark.EMPTY);
+                        btn.setMouseTransparent(!empty);
+                        if (empty) {
+                            final int rr = r, cc = c;
+                            btn.setOnAction(e -> onCellClick(rr, cc));
+                        } else {
+                            btn.setOnAction(null);
+                        }
+                    }
+                }
+            }
+
+            myTurn = ctx.username != null && ctx.username.equals(snap.getTurn());
+            refreshHeader();
+        });
     }
 }

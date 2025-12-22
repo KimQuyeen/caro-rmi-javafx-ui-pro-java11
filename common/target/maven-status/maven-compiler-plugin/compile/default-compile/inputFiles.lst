@@ -3,6 +3,7 @@
 /Users/kimquyen/Downloads/caro-rmi-javafx-ui-pro-java11/common/src/main/java/vn/edu/demo/caro/common/model/Enums.java
 /Users/kimquyen/Downloads/caro-rmi-javafx-ui-pro-java11/common/src/main/java/vn/edu/demo/caro/common/model/FriendRequest.java
 /Users/kimquyen/Downloads/caro-rmi-javafx-ui-pro-java11/common/src/main/java/vn/edu/demo/caro/common/model/GameEnd.java
+/Users/kimquyen/Downloads/caro-rmi-javafx-ui-pro-java11/common/src/main/java/vn/edu/demo/caro/common/model/GameSnapshot.java
 /Users/kimquyen/Downloads/caro-rmi-javafx-ui-pro-java11/common/src/main/java/vn/edu/demo/caro/common/model/GameStart.java
 /Users/kimquyen/Downloads/caro-rmi-javafx-ui-pro-java11/common/src/main/java/vn/edu/demo/caro/common/model/GameUpdate.java
 /Users/kimquyen/Downloads/caro-rmi-javafx-ui-pro-java11/common/src/main/java/vn/edu/demo/caro/common/model/Move.java

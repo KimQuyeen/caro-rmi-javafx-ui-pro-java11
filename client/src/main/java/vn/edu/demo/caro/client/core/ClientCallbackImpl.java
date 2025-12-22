@@ -132,7 +132,6 @@ public class ClientCallbackImpl extends UnicastRemoteObject implements ClientCal
     @Override
     public void onGameStarted(GameStart start) throws RemoteException {
         Platform.runLater(() -> {
-            // QUAN TRỌNG:
             // Lúc này user vẫn đang ở Main/Rooms, gameController thường chưa tồn tại.
             // => lưu pending rồi chuyển scene sang Game.
             ctx.currentRoomId = start.getRoomId();
@@ -154,6 +153,14 @@ public class ClientCallbackImpl extends UnicastRemoteObject implements ClientCal
     public void onGameEnded(GameEnd end) throws RemoteException {
         Platform.runLater(() -> {
             if (gameController != null) gameController.onGameEnd(end);
+        });
+    }
+
+    // -------- Board snapshot (authoritative) --------
+    @Override
+    public void onBoardReset(GameSnapshot snapshot) throws RemoteException {
+        Platform.runLater(() -> {
+            if (gameController != null) gameController.applySnapshot(snapshot);
         });
     }
 

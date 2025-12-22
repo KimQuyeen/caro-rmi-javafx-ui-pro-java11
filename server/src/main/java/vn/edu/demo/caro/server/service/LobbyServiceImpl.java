@@ -21,13 +21,10 @@ public class LobbyServiceImpl extends UnicastRemoteObject implements LobbyServic
 
     private final ServerState state;
 
-    // --------- In-memory request state (per room) ----------
-    // Chỉ hỗ trợ 2 người nên lưu đơn giản.
     private final Map<String, PendingDecision> pendingUndo = new HashMap<>();
     private final Map<String, PendingDecision> pendingRedo = new HashMap<>();
     private final Map<String, PendingDecision> pendingRematch = new HashMap<>();
 
-    // For undo/redo: keep move history on server authoritative
     private final Map<String, Deque<MoveRecord>> moveHistory = new HashMap<>();
     private final Map<String, Deque<MoveRecord>> redoStack = new HashMap<>();
 
@@ -133,21 +130,18 @@ public class LobbyServiceImpl extends UnicastRemoteObject implements LobbyServic
 
         String id = UUID.randomUUID().toString();
 
-    Room room = new Room(id, owner, req);
+        Room room = new Room(id, owner, req);
 
-    // IMPORTANT: owner phải là player #1
-    if (!room.players.contains(owner)) room.players.add(owner);
+        if (!room.players.contains(owner)) room.players.add(owner);
+        room.status = RoomStatus.WAITING;
 
-    // đảm bảo trạng thái
-    room.status = RoomStatus.WAITING;
+        state.rooms.put(id, room);
 
-    state.rooms.put(id, room);
+        moveHistory.put(id, new ArrayDeque<>());
+        redoStack.put(id, new ArrayDeque<>());
 
-    moveHistory.put(id, new ArrayDeque<>());
-    redoStack.put(id, new ArrayDeque<>());
-
-    broadcastRooms();
-    return id;
+        broadcastRooms();
+        return id;
     }
 
     @Override
@@ -160,51 +154,61 @@ public class LobbyServiceImpl extends UnicastRemoteObject implements LobbyServic
     }
 
     @Override
-public synchronized boolean joinRoom(String username, String roomId, String password) throws RemoteException {
-    requireOnline(username);
-    Room room = state.rooms.get(roomId);
-    if (room == null) throw new RemoteException("Room không tồn tại.");
+    public synchronized boolean joinRoom(String username, String roomId, String password) throws RemoteException {
+        requireOnline(username);
+        Room room = state.rooms.get(roomId);
+        if (room == null) throw new RemoteException("Room không tồn tại.");
 
-    // Nếu phòng không còn WAITING -> trả false (tránh RemoteException gây khó chịu UI)
-    if (room.status != RoomStatus.WAITING) return false;
+        if (room.status != RoomStatus.WAITING) return false;
+        if (room.isFull()) return false;
 
-    if (room.isFull()) return false;
-
-    // check password nếu phòng có password
-    if (room.hasPassword) {
-        if (password == null || password.trim().isEmpty()) {
-            throw new RemoteException("Phòng yêu cầu mật khẩu.");
+        if (room.hasPassword) {
+            if (password == null || password.trim().isEmpty()) {
+                throw new RemoteException("Phòng yêu cầu mật khẩu.");
+            }
+            if (!Objects.equals(room.password, password)) {
+                throw new RemoteException("Mật khẩu phòng không đúng.");
+            }
         }
-        if (!Objects.equals(room.password, password)) {
-            throw new RemoteException("Mật khẩu phòng không đúng.");
+
+        if (!room.players.contains(username)) room.players.add(username);
+
+        if (room.players.size() == 2) {
+            // ===== start match (RESET STATE AUTHORITATIVE) =====
+            room.status = RoomStatus.PLAYING;
+
+            String p1 = room.players.get(0);
+            String p2 = room.players.get(1);
+
+            boolean p1IsX = ThreadLocalRandom.current().nextBoolean();
+            room.playerX = p1IsX ? p1 : p2;
+            room.playerO = p1IsX ? p2 : p1;
+            room.turn = room.playerX;
+
+            room.moveNo = 0;
+            clearBoard(room);
+
+            moveHistory.computeIfAbsent(roomId, k -> new ArrayDeque<>()).clear();
+            redoStack.computeIfAbsent(roomId, k -> new ArrayDeque<>()).clear();
+            pendingUndo.remove(roomId);
+            pendingRedo.remove(roomId);
+
+            if (room.timed) {
+                room.turnDeadlineMillis = System.currentTimeMillis() + room.timeLimitSeconds * 1000L;
+            } else {
+                room.turnDeadlineMillis = 0L;
+            }
+
+            pushGameStart(room, room.playerX, Mark.X, true);
+            pushGameStart(room, room.playerO, Mark.O, false);
+
+            // snapshot ngay khi bắt đầu để client chắc chắn đúng size/board
+            broadcastSnapshot(room);
         }
+
+        broadcastRooms();
+        return true;
     }
-
-    if (!room.players.contains(username)) room.players.add(username);
-
-    if (room.players.size() == 2) {
-        room.status = RoomStatus.PLAYING;
-
-        String p1 = room.players.get(0);
-        String p2 = room.players.get(1);
-
-        boolean p1IsX = ThreadLocalRandom.current().nextBoolean();
-        room.playerX = p1IsX ? p1 : p2;
-        room.playerO = p1IsX ? p2 : p1;
-        room.turn = room.playerX;
-
-        pushGameStart(room, room.playerX, Mark.X, true);
-        pushGameStart(room, room.playerO, Mark.O, false);
-
-        if (room.timed) {
-            room.turnDeadlineMillis = System.currentTimeMillis() + room.timeLimitSeconds * 1000L;
-        }
-    }
-
-    broadcastRooms();
-    return true;
-}
-
 
     @Override
     public synchronized void leaveRoom(String username, String roomId) throws RemoteException {
@@ -216,7 +220,6 @@ public synchronized boolean joinRoom(String username, String roomId, String pass
         if (room.status == RoomStatus.PLAYING && room.players.size() == 1) {
             String remaining = room.players.get(0);
 
-            // abort
             safeCallback(remaining, cb -> cb.onGameEnded(new GameEnd(roomId, remaining, GameEndReason.ABORT)));
 
             cleanupRoom(roomId);
@@ -274,35 +277,50 @@ public synchronized boolean joinRoom(String username, String roomId, String pass
     // ---------------- Gameplay ----------------
     @Override
     public synchronized void makeMove(String roomId, String username, int row, int col) throws RemoteException {
-        Room room = state.rooms.get(roomId);
-        if (room == null) throw new RemoteException("Room không tồn tại.");
-        if (room.status != RoomStatus.PLAYING) throw new RemoteException("Room không ở trạng thái PLAYING.");
-        if (!room.players.contains(username)) throw new RemoteException("Bạn không ở trong phòng.");
-        if (!Objects.equals(room.turn, username)) throw new RemoteException("Chưa đến lượt bạn.");
+         Room room = state.rooms.get(roomId);
+    if (room == null) throw new RemoteException("Room không tồn tại.");
+    if (room.status != RoomStatus.PLAYING) throw new RemoteException("Room không ở trạng thái PLAYING.");
+    if (username == null) throw new RemoteException("User null.");
 
+    username = username.trim(); // QUAN TRỌNG: tránh lệch do khoảng trắng
+
+    if (!room.players.contains(username)) throw new RemoteException("Bạn không ở trong phòng.");
+
+    if (!Objects.equals(room.turn, username)) {
+        throw new RemoteException("Chưa đến lượt bạn. Lượt hiện tại: " + room.turn);
+    }
         if (!inBounds(room, row, col)) throw new RemoteException("Nước đi ngoài bàn cờ.");
         if (room.board[row][col] != Mark.EMPTY) throw new RemoteException("Ô đã được đánh.");
 
         // Clear redo stack when a new move is made
-        redoStack.getOrDefault(roomId, new ArrayDeque<>()).clear();
+        // Clear redo stack when a new move is made
+redoStack.computeIfAbsent(roomId, k -> new ArrayDeque<>()).clear();
+
 
         Mark mark = username.equals(room.playerX) ? Mark.X : Mark.O;
         room.board[row][col] = mark;
+
         int moveNo = ++room.moveNo;
 
-        // history
         moveHistory.computeIfAbsent(roomId, k -> new ArrayDeque<>())
                 .push(new MoveRecord(row, col, mark, username, moveNo));
 
         String next = username.equals(room.playerX) ? room.playerO : room.playerX;
         room.turn = next;
 
+        // reset deadline cho lượt tiếp theo (nếu timed)
+        if (room.timed) {
+            room.turnDeadlineMillis = System.currentTimeMillis() + room.timeLimitSeconds * 1000L;
+        }
+
         Move mv = new Move(row, col, moveNo, username);
         GameUpdate update = new GameUpdate(roomId, mv, mark, next);
 
         for (String u : new ArrayList<>(room.players)) safeCallback(u, cb -> cb.onGameUpdated(update));
 
-        // check win/draw
+        // snapshot để client đồng bộ chắc chắn (khuyến nghị)
+        broadcastSnapshot(room);
+
         if (isWin(room, row, col, mark)) {
             endGame(room, username, GameEndReason.WIN);
         } else if (room.moveNo >= room.boardSize * room.boardSize) {
@@ -325,20 +343,51 @@ public synchronized boolean joinRoom(String username, String roomId, String pass
 
     // ---------------- Undo/Redo ----------------
     @Override
-    public synchronized void requestUndo(String roomId, String from) throws RemoteException {
-        Room room = mustPlayingRoom(roomId);
-        requirePlayer(room, from);
+public synchronized void requestUndo(String roomId, String from) throws RemoteException {
+    Room room = mustPlayingRoom(roomId);
+    requirePlayer(room, from);
 
-        String opp = opponentOf(room, from);
-        if (opp == null) throw new RemoteException("Chưa có đối thủ.");
-
-        if (moveHistory.getOrDefault(roomId, new ArrayDeque<>()).isEmpty())
-            throw new RemoteException("Chưa có nước đi để Undo.");
-
-        pendingUndo.put(roomId, new PendingDecision(from, opp));
-        safeCallback(opp, cb -> cb.onAnnouncement("[UNDO] " + from + " yêu cầu Undo. (Bạn cần đồng ý/từ chối trên UI)"));
-        safeCallback(from, cb -> cb.onAnnouncement("[UNDO] Đã gửi yêu cầu Undo tới " + opp));
+    Deque<MoveRecord> hist = moveHistory.computeIfAbsent(roomId, k -> new ArrayDeque<>());
+    if (hist.isEmpty()) {
+        safeCallback(from, cb -> cb.onUndoResult(roomId, false, "Chưa có nước đi để Undo."));
+        return;
     }
+
+    // Rule: chỉ undo nếu nước mới nhất là của chính bạn
+    MoveRecord last = hist.peek();
+    if (!Objects.equals(last.by, from)) {
+        safeCallback(from, cb -> cb.onUndoResult(roomId, false,
+                "Bạn chỉ được Undo nước mới nhất của CHÍNH bạn (khi đối thủ chưa đi)."));
+        return;
+    }
+
+    // Rule: sau khi bạn đánh, turn đang là đối thủ; nếu đang là lượt bạn thì không hợp lệ để undo “nước vừa đánh”
+    if (Objects.equals(room.turn, from)) {
+        safeCallback(from, cb -> cb.onUndoResult(roomId, false,
+                "Không thể Undo lúc đang tới lượt bạn. Bạn chỉ Undo ngay sau khi vừa đánh xong."));
+        return;
+    }
+
+    // Thực hiện undo
+    hist.pop();
+    Deque<MoveRecord> redo = redoStack.computeIfAbsent(roomId, k -> new ArrayDeque<>());
+    redo.push(last);
+
+    room.board[last.row][last.col] = Mark.EMPTY;
+    room.moveNo = Math.max(0, room.moveNo - 1);
+
+    // trả lượt về cho người vừa undo
+    room.turn = from;
+
+    // đồng bộ lại bàn cờ cho cả 2 client
+    broadcastSnapshot(room);
+
+    for (String u : new ArrayList<>(room.players)) {
+        safeCallback(u, cb -> cb.onUndoResult(roomId, true,
+                "Undo thành công: (" + last.row + "," + last.col + "). Lượt hiện tại: " + room.turn));
+    }
+}
+
 
     @Override
     public synchronized void respondUndo(String roomId, String responder, boolean accept) throws RemoteException {
@@ -353,52 +402,93 @@ public synchronized boolean joinRoom(String username, String roomId, String pass
         pendingUndo.remove(roomId);
 
         if (!accept) {
-            safeCallback(requester, cb -> cb.onAnnouncement("[UNDO] " + responder + " đã từ chối Undo."));
-            safeCallback(responder, cb -> cb.onAnnouncement("[UNDO] Bạn đã từ chối Undo."));
+            safeCallback(requester, cb -> cb.onUndoResult(roomId, false, responder + " đã từ chối Undo."));
+            safeCallback(responder, cb -> cb.onUndoResult(roomId, false, "Bạn đã từ chối Undo."));
             return;
         }
 
-        // Perform undo: remove last move
         Deque<MoveRecord> hist = moveHistory.getOrDefault(roomId, new ArrayDeque<>());
-        if (hist.isEmpty()) throw new RemoteException("Không có nước đi để Undo.");
+        if (hist.isEmpty()) {
+            safeCallback(requester, cb -> cb.onUndoResult(roomId, false, "Không có nước đi để Undo."));
+            safeCallback(responder, cb -> cb.onUndoResult(roomId, false, "Không có nước đi để Undo."));
+            return;
+        }
 
         MoveRecord last = hist.pop();
 
         // push to redo stack
         redoStack.computeIfAbsent(roomId, k -> new ArrayDeque<>()).push(last);
 
-        // revert board
         room.board[last.row][last.col] = Mark.EMPTY;
         room.moveNo = Math.max(0, room.moveNo - 1);
 
         // turn becomes the player who made the undone move
         room.turn = last.by;
 
-        // broadcast a "re-sync" message using announcements (simple)
-        for (String u : new ArrayList<>(room.players)) {
-            safeCallback(u, cb -> cb.onAnnouncement("[UNDO] Đã Undo nước (" + last.row + "," + last.col + "). Lượt: " + room.turn));
+        // reset deadline cho lượt hiện tại (nếu timed)
+        if (room.timed) {
+            room.turnDeadlineMillis = System.currentTimeMillis() + room.timeLimitSeconds * 1000L;
         }
 
-        // Bạn nên gọi callback riêng để client redraw board (nếu có). Hiện tại demo: client có thể tự đồng bộ bằng cách
-        // - refresh UI local (nếu client lưu board)
-        // - hoặc bạn bổ sung callback onBoardReset(...) sau.
+        safeCallback(requester, cb -> cb.onUndoResult(roomId, true,
+                "Undo thành công: (" + last.row + "," + last.col + "). Lượt: " + room.turn));
+        safeCallback(responder, cb -> cb.onUndoResult(roomId, true,
+                "Bạn đã đồng ý Undo. Lượt: " + room.turn));
+
+        broadcastSnapshot(room);
     }
 
     @Override
-    public synchronized void requestRedo(String roomId, String from) throws RemoteException {
-        Room room = mustPlayingRoom(roomId);
-        requirePlayer(room, from);
+public synchronized void requestRedo(String roomId, String from) throws RemoteException {
+    Room room = mustPlayingRoom(roomId);
+    requirePlayer(room, from);
 
-        String opp = opponentOf(room, from);
-        if (opp == null) throw new RemoteException("Chưa có đối thủ.");
-
-        if (redoStack.getOrDefault(roomId, new ArrayDeque<>()).isEmpty())
-            throw new RemoteException("Không có nước để Redo.");
-
-        pendingRedo.put(roomId, new PendingDecision(from, opp));
-        safeCallback(opp, cb -> cb.onAnnouncement("[REDO] " + from + " yêu cầu Redo. (Bạn cần đồng ý/từ chối trên UI)"));
-        safeCallback(from, cb -> cb.onAnnouncement("[REDO] Đã gửi yêu cầu Redo tới " + opp));
+    Deque<MoveRecord> redo = redoStack.computeIfAbsent(roomId, k -> new ArrayDeque<>());
+    if (redo.isEmpty()) {
+        safeCallback(from, cb -> cb.onRedoResult(roomId, false, "Không có nước để Redo."));
+        return;
     }
+
+    MoveRecord mv = redo.peek();
+
+    // Rule: chỉ redo nước của chính bạn
+    if (!Objects.equals(mv.by, from)) {
+        safeCallback(from, cb -> cb.onRedoResult(roomId, false,
+                "Bạn chỉ được Redo nước của CHÍNH bạn."));
+        return;
+    }
+
+    // Rule: redo chỉ khi đang là lượt bạn (vì undo xong trả lượt về bạn)
+    if (!Objects.equals(room.turn, from)) {
+        safeCallback(from, cb -> cb.onRedoResult(roomId, false,
+                "Chỉ được Redo khi đang tới lượt bạn."));
+        return;
+    }
+
+    // apply redo
+    redo.pop();
+
+    if (!inBounds(room, mv.row, mv.col) || room.board[mv.row][mv.col] != Mark.EMPTY) {
+        safeCallback(from, cb -> cb.onRedoResult(roomId, false,
+                "Không thể Redo vì ô không hợp lệ / đã có quân."));
+        return;
+    }
+
+    room.board[mv.row][mv.col] = mv.mark;
+    room.moveNo++;
+
+    moveHistory.computeIfAbsent(roomId, k -> new ArrayDeque<>()).push(mv);
+
+    // sau khi redo nước của bạn, tới lượt đối thủ
+    String opp = opponentOf(room, from);
+    room.turn = (opp == null ? room.turn : opp);
+
+    broadcastSnapshot(room);
+
+    for (String u : new ArrayList<>(room.players)) {
+        safeCallback(u, cb -> cb.onRedoResult(roomId, true,
+                "Redo thành công: (" + mv.row + "," + mv.col + "). Lượt hiện tại: " + room.turn));
+    }}
 
     @Override
     public synchronized void respondRedo(String roomId, String responder, boolean accept) throws RemoteException {
@@ -413,33 +503,46 @@ public synchronized boolean joinRoom(String username, String roomId, String pass
         pendingRedo.remove(roomId);
 
         if (!accept) {
-            safeCallback(requester, cb -> cb.onAnnouncement("[REDO] " + responder + " đã từ chối Redo."));
-            safeCallback(responder, cb -> cb.onAnnouncement("[REDO] Bạn đã từ chối Redo."));
+            safeCallback(requester, cb -> cb.onRedoResult(roomId, false, responder + " đã từ chối Redo."));
+            safeCallback(responder, cb -> cb.onRedoResult(roomId, false, "Bạn đã từ chối Redo."));
             return;
         }
 
         Deque<MoveRecord> redo = redoStack.getOrDefault(roomId, new ArrayDeque<>());
-        if (redo.isEmpty()) throw new RemoteException("Không có nước để Redo.");
+        if (redo.isEmpty()) {
+            safeCallback(requester, cb -> cb.onRedoResult(roomId, false, "Không có nước để Redo."));
+            safeCallback(responder, cb -> cb.onRedoResult(roomId, false, "Không có nước để Redo."));
+            return;
+        }
 
         MoveRecord mv = redo.pop();
 
-        // apply again
         if (!inBounds(room, mv.row, mv.col) || room.board[mv.row][mv.col] != Mark.EMPTY) {
-            throw new RemoteException("Không thể Redo vì ô không hợp lệ.");
+            safeCallback(requester, cb -> cb.onRedoResult(roomId, false, "Không thể Redo vì ô không hợp lệ."));
+            safeCallback(responder, cb -> cb.onRedoResult(roomId, false, "Không thể Redo vì ô không hợp lệ."));
+            return;
         }
 
         room.board[mv.row][mv.col] = mv.mark;
-        room.moveNo++;
+        int newNo = ++room.moveNo;
 
-        moveHistory.computeIfAbsent(roomId, k -> new ArrayDeque<>()).push(mv);
+        // push history với moveNo mới (tránh lệch)
+        moveHistory.computeIfAbsent(roomId, k -> new ArrayDeque<>())
+                .push(new MoveRecord(mv.row, mv.col, mv.mark, mv.by, newNo));
 
-        // next turn after redo is opponent of the one who made move
         String next = mv.by.equals(room.playerX) ? room.playerO : room.playerX;
         room.turn = next;
 
-        for (String u : new ArrayList<>(room.players)) {
-            safeCallback(u, cb -> cb.onAnnouncement("[REDO] Đã Redo nước (" + mv.row + "," + mv.col + "). Lượt: " + room.turn));
+        if (room.timed) {
+            room.turnDeadlineMillis = System.currentTimeMillis() + room.timeLimitSeconds * 1000L;
         }
+
+        safeCallback(requester, cb -> cb.onRedoResult(roomId, true,
+                "Redo thành công: (" + mv.row + "," + mv.col + "). Lượt: " + room.turn));
+        safeCallback(responder, cb -> cb.onRedoResult(roomId, true,
+                "Bạn đã đồng ý Redo. Lượt: " + room.turn));
+
+        broadcastSnapshot(room);
     }
 
     // ---------------- Rematch / Return ----------------
@@ -452,8 +555,6 @@ public synchronized boolean joinRoom(String username, String roomId, String pass
         String opp = opponentOf(room, from);
         if (opp == null) throw new RemoteException("Chưa có đối thủ.");
 
-        // Cho phép request rematch khi ván đã kết thúc hoặc room đang PLAYING nhưng muốn "restart" (tuỳ bạn).
-        // Ở đây: chỉ cho khi room.status != WAITING (đã đủ 2 người).
         pendingRematch.put(roomId, new PendingDecision(from, opp));
         safeCallback(opp, cb -> cb.onAnnouncement("[REMATCH] " + from + " yêu cầu chơi lại. Đồng ý/Từ chối?"));
         safeCallback(from, cb -> cb.onAnnouncement("[REMATCH] Đã gửi yêu cầu rematch tới " + opp));
@@ -478,12 +579,13 @@ public synchronized boolean joinRoom(String username, String roomId, String pass
             return;
         }
 
-        // Reset board + swap who goes first by swapping X/O assignment
         resetBoardAndSwap(room);
 
-        // Notify start again
         pushGameStart(room, room.playerX, Mark.X, true);
         pushGameStart(room, room.playerO, Mark.O, false);
+
+        // snapshot để client reset UI đúng board size + state
+        broadcastSnapshot(room);
 
         for (String u : new ArrayList<>(room.players)) {
             safeCallback(u, cb -> cb.onAnnouncement("[REMATCH] Bắt đầu ván mới. X đi trước. Kích thước bàn=" + room.boardSize));
@@ -502,7 +604,6 @@ public synchronized boolean joinRoom(String username, String roomId, String pass
 
         if (opp != null) {
             safeCallback(opp, cb -> cb.onAnnouncement("[ROOM] " + from + " đã rời về sảnh. Bạn sẽ được đưa về sảnh."));
-            // kết thúc phòng bằng ABORT cho người còn lại (tuỳ bạn muốn DRAW/ABORT)
             safeCallback(opp, cb -> cb.onGameEnded(new GameEnd(roomId, opp, GameEndReason.ABORT)));
         }
 
@@ -560,29 +661,7 @@ public synchronized boolean joinRoom(String username, String roomId, String pass
     }
 
     // ---------------- Internal helpers ----------------
-    private void startMatch(Room room) {
-        room.status = RoomStatus.PLAYING;
-
-        String p1 = room.players.get(0);
-        String p2 = room.players.get(1);
-
-        boolean p1IsX = ThreadLocalRandom.current().nextBoolean();
-        room.playerX = p1IsX ? p1 : p2;
-        room.playerO = p1IsX ? p2 : p1;
-        room.turn = room.playerX;
-        room.moveNo = 0;
-
-        clearBoard(room);
-
-        moveHistory.computeIfAbsent(room.id, k -> new ArrayDeque<>()).clear();
-        redoStack.computeIfAbsent(room.id, k -> new ArrayDeque<>()).clear();
-
-        pushGameStart(room, room.playerX, Mark.X, true);
-        pushGameStart(room, room.playerO, Mark.O, false);
-    }
-
     private void resetBoardAndSwap(Room room) {
-        // swap X/O
         String oldX = room.playerX;
         room.playerX = room.playerO;
         room.playerO = oldX;
@@ -597,6 +676,12 @@ public synchronized boolean joinRoom(String username, String roomId, String pass
         redoStack.computeIfAbsent(room.id, k -> new ArrayDeque<>()).clear();
         pendingUndo.remove(room.id);
         pendingRedo.remove(room.id);
+
+        if (room.timed) {
+            room.turnDeadlineMillis = System.currentTimeMillis() + room.timeLimitSeconds * 1000L;
+        } else {
+            room.turnDeadlineMillis = 0L;
+        }
     }
 
     private void clearBoard(Room room) {
@@ -612,7 +697,6 @@ public synchronized boolean joinRoom(String username, String roomId, String pass
             GameEnd end = new GameEnd(room.id, winner, reason);
             for (String u : new ArrayList<>(room.players)) safeCallback(u, cb -> cb.onGameEnded(end));
 
-            // Persist match + update stats (giữ logic cũ của bạn)
             String x = room.playerX;
             String o = room.playerO;
             state.matchDao.insertMatch(room.id, x, o, winner, reason.name());
@@ -624,12 +708,7 @@ public synchronized boolean joinRoom(String username, String roomId, String pass
                 applyEloAndStats(x, o, true);
             }
 
-            // KHÔNG remove room ngay để còn rematch/return.
-            // Nếu bạn muốn auto-close room, bạn sẽ không rematch được.
-            // -> giữ room ở trạng thái WAITING_REMATCH? (nếu bạn có enum)
-            // Tạm thời: chuyển WAITING để client thấy phòng vẫn tồn tại.
             room.status = RoomStatus.WAITING;
-
             broadcastLeaderboard();
         } catch (SQLException e) {
             throw new RemoteException("DB error (endGame): " + e.getMessage(), e);
@@ -692,67 +771,66 @@ public synchronized boolean joinRoom(String username, String roomId, String pass
     }
 
     private boolean isWin(Room room, int row, int col, Mark mark) {
-        // Win check 5-in-row with room.blockTwoEnds
-        // Bạn đang có GameRules; để tránh sai kích thước, ta implement nhanh ở đây.
         return checkWin5(room, row, col, mark, room.blockTwoEnds);
     }
 
-    private boolean checkWin5(Room room, int row, int col, Mark mark, boolean blockTwoEnds) {
-        // 4 directions
-        int[][] dirs = {{1,0},{0,1},{1,1},{1,-1}};
-        for (int[] d : dirs) {
-            int count = 1;
-            int openEnds = 0;
+   private boolean checkWin5(Room room, int row, int col, Mark mark, boolean blockTwoEnds) {
+    int[][] dirs = {{1,0},{0,1},{1,1},{1,-1}};
+    for (int[] d : dirs) {
+        int count = 1;
+        int openEnds = 0;
 
-            // forward
-            int r = row + d[0], c = col + d[1];
-            while (inBounds(room, r, c) && room.board[r][c] == mark) {
-                count++;
-                r += d[0]; c += d[1];
-            }
-            if (inBounds(room, r, c) && room.board[r][c] == Mark.EMPTY) openEnds++;
-
-            // backward
-            r = row - d[0]; c = col - d[1];
-            while (inBounds(room, r, c) && room.board[r][c] == mark) {
-                count++;
-                r -= d[0]; c -= d[1];
-            }
-            if (inBounds(room, r, c) && room.board[r][c] == Mark.EMPTY) openEnds++;
-
-            if (count >= 5) {
-                if (!blockTwoEnds) return true;
-                // if blockTwoEnds => require at least 1 open end
-                if (openEnds >= 1) return true;
-            }
+        // forward
+        int r = row + d[0], c = col + d[1];
+        while (inBounds(room, r, c) && room.board[r][c] == mark) {
+            count++;
+            r += d[0]; c += d[1];
         }
-        return false;
+        // sửa: ra khỏi bàn cũng tính là open end
+        if (!inBounds(room, r, c) || room.board[r][c] == Mark.EMPTY) openEnds++;
+
+        // backward
+        r = row - d[0]; c = col - d[1];
+        while (inBounds(room, r, c) && room.board[r][c] == mark) {
+            count++;
+            r -= d[0]; c -= d[1];
+        }
+        // sửa: ra khỏi bàn cũng tính là open end
+        if (!inBounds(room, r, c) || room.board[r][c] == Mark.EMPTY) openEnds++;
+
+        if (count >= 5) {
+            if (!blockTwoEnds) return true;
+            // blockTwoEnds=true: chỉ cần >=1 đầu mở
+            return openEnds >= 1;
+        }
     }
-
-    private void pushGameStart(Room room, String user, Mark mark, boolean yourTurn) {
-    String opp = room.players.stream()
-            .filter(p -> !p.equals(user))
-            .findFirst()
-            .orElse("?");
-
-    safeCallback(user, cb -> cb.onGameStarted(
-            new GameStart(
-                    room.id,
-                    opp,
-                    mark,
-                    yourTurn,
-                    room.boardSize,
-                    room.blockTwoEnds,
-                    room.timed,
-                    room.timeLimitSeconds
-            )
-    ));
-    System.out.println("[GameStart] to=" + user +
-    " mark=" + mark + " yourTurn=" + yourTurn +
-    " turn=" + room.turn + " X=" + room.playerX + " O=" + room.playerO);
-
+    return false;
 }
 
+
+    private void pushGameStart(Room room, String user, Mark mark, boolean yourTurn) {
+        String opp = room.players.stream()
+                .filter(p -> !p.equals(user))
+                .findFirst()
+                .orElse("?");
+
+        safeCallback(user, cb -> cb.onGameStarted(
+                new GameStart(
+                        room.id,
+                        opp,
+                        mark,
+                        yourTurn,
+                        room.boardSize,
+                        room.blockTwoEnds,
+                        room.timed,
+                        room.timeLimitSeconds
+                )
+        ));
+
+        System.out.println("[GameStart] to=" + user +
+                " mark=" + mark + " yourTurn=" + yourTurn +
+                " turn=" + room.turn + " X=" + room.playerX + " O=" + room.playerO);
+    }
 
     private RoomInfo toInfo(Room r) {
         return new RoomInfo(
@@ -800,10 +878,31 @@ public synchronized boolean joinRoom(String username, String roomId, String pass
         try { call.run(s.callback); } catch (Exception ignored) {}
     }
 
+    // ===== Snapshot helpers =====
+    private Mark[][] copyBoard(Room room) {
+        Mark[][] b = new Mark[room.boardSize][room.boardSize];
+        for (int r = 0; r < room.boardSize; r++) {
+            System.arraycopy(room.board[r], 0, b[r], 0, room.boardSize);
+        }
+        return b;
+    }
+
+    private void broadcastSnapshot(Room room) {
+        GameSnapshot snap = new GameSnapshot(
+                room.id,
+                room.boardSize,
+                copyBoard(room),
+                room.moveNo,
+                room.turn
+        );
+        for (String u : new ArrayList<>(room.players)) {
+            safeCallback(u, cb -> cb.onBoardReset(snap));
+        }
+    }
+
     @FunctionalInterface
     private interface CallbackCall { void run(ClientCallback cb) throws Exception; }
 
-    // ---------- helper classes ----------
     private static class PendingDecision {
         final String from;
         final String to;
@@ -825,4 +924,12 @@ public synchronized boolean joinRoom(String username, String roomId, String pass
             this.moveNo = moveNo;
         }
     }
+    
+    private String norm(String s) throws RemoteException {
+    if (s == null) throw new RemoteException("User null.");
+    s = s.trim();
+    if (s.isEmpty()) throw new RemoteException("User rỗng.");
+    return s;
+}
+
 }
