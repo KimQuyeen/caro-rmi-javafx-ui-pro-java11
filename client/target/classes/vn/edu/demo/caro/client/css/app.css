@@ -1,0 +1,11 @@
+.root { -fx-font-family: "System"; }
+.list-cell {
+    -fx-padding: 10 12 10 12;
+}
+.board-scroll {
+    -fx-background-color: transparent;
+    -fx-background: transparent;
+}
+.board-scroll .viewport {
+    -fx-background-color: transparent;
+}

@@ -1,0 +1,76 @@
+<?xml version="1.0" encoding="UTF-8"?>
+
+<?import javafx.geometry.Insets?>
+<?import javafx.scene.control.*?>
+<?import javafx.scene.layout.*?>
+
+<BorderPane xmlns="http://javafx.com/javafx/17" xmlns:fx="http://javafx.com/fxml/1"
+            fx:controller="vn.edu.demo.caro.client.controller.MainController">
+    <top>
+        <HBox spacing="10">
+            <padding><Insets top="10" right="10" bottom="10" left="10"/></padding>
+            <Label fx:id="lbMe" text="Xin chào" style="-fx-font-size: 14px; -fx-font-weight: bold;"/>
+        </HBox>
+    </top>
+
+    <left>
+        <VBox spacing="10" prefWidth="360">
+            <padding><Insets top="12" right="12" bottom="12" left="12"/></padding>
+            <Label text="Phòng trống" style="-fx-font-size: 16px; -fx-font-weight: bold;"/>
+            <ListView fx:id="lvRooms" prefHeight="520"/>
+            <HBox spacing="8">
+                <TextField fx:id="tfRoomName" promptText="Tên phòng..." HBox.hgrow="ALWAYS"/>
+                <Button text="Tạo phòng" onAction="#onCreateRoom"/>
+            </HBox>
+            <HBox spacing="8">
+                <Button text="Vào phòng" onAction="#onJoinRoom"/>
+                <Button text="Chơi nhanh" onAction="#onQuickPlay"/>
+            </HBox>
+        </VBox>
+    </left>
+
+    <center>
+        <VBox spacing="10">
+            <padding><Insets top="12" right="12" bottom="12" left="12"/></padding>
+            <Label text="Chat toàn cục" style="-fx-font-size: 16px; -fx-font-weight: bold;"/>
+            <TextArea fx:id="taGlobalChat" wrapText="true" VBox.vgrow="ALWAYS"/>
+            <HBox spacing="8">
+                <TextField fx:id="tfGlobalChat" promptText="Nhập tin nhắn..." onAction="#onSendGlobalChat" HBox.hgrow="ALWAYS"/>
+                <Button text="Gửi" onAction="#onSendGlobalChat"/>
+            </HBox>
+        </VBox>
+    </center>
+
+    <right>
+        <VBox spacing="10" prefWidth="340">
+            <padding><Insets top="12" right="12" bottom="12" left="12"/></padding>
+            <Label text="Người chơi" style="-fx-font-size: 16px; -fx-font-weight: bold;"/>
+            <TabPane tabClosingPolicy="UNAVAILABLE" VBox.vgrow="ALWAYS">
+                <tabs>
+                    <Tab text="Online">
+                        <content>
+                            <ListView fx:id="lvOnline"/>
+                        </content>
+                    </Tab>
+                    <Tab text="Bạn bè">
+                        <content>
+                            <VBox spacing="10">
+                                <padding><Insets top="10" right="10" bottom="10" left="10"/></padding>
+                                <ListView fx:id="lvFriends" VBox.vgrow="ALWAYS"/>
+                                <HBox spacing="8">
+                                    <TextField fx:id="tfFriend" promptText="Nhập username..." HBox.hgrow="ALWAYS"/>
+                                    <Button text="Kết bạn" onAction="#onSendFriendRequest"/>
+                                </HBox>
+                            </VBox>
+                        </content>
+                    </Tab>
+                    <Tab text="BXH">
+                        <content>
+                            <ListView fx:id="lvLeaderboard"/>
+                        </content>
+                    </Tab>
+                </tabs>
+            </TabPane>
+        </VBox>
+    </right>
+</BorderPane>

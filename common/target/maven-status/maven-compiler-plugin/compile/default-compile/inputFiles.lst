@@ -1,0 +1,15 @@
+/Users/kimquyen/Downloads/caro-rmi-javafx-ui-pro-java11/common/src/main/java/vn/edu/demo/caro/common/ai/MinimaxAI.java
+/Users/kimquyen/Downloads/caro-rmi-javafx-ui-pro-java11/common/src/main/java/vn/edu/demo/caro/common/model/ChatMessage.java
+/Users/kimquyen/Downloads/caro-rmi-javafx-ui-pro-java11/common/src/main/java/vn/edu/demo/caro/common/model/Enums.java
+/Users/kimquyen/Downloads/caro-rmi-javafx-ui-pro-java11/common/src/main/java/vn/edu/demo/caro/common/model/FriendRequest.java
+/Users/kimquyen/Downloads/caro-rmi-javafx-ui-pro-java11/common/src/main/java/vn/edu/demo/caro/common/model/GameEnd.java
+/Users/kimquyen/Downloads/caro-rmi-javafx-ui-pro-java11/common/src/main/java/vn/edu/demo/caro/common/model/GameStart.java
+/Users/kimquyen/Downloads/caro-rmi-javafx-ui-pro-java11/common/src/main/java/vn/edu/demo/caro/common/model/GameUpdate.java
+/Users/kimquyen/Downloads/caro-rmi-javafx-ui-pro-java11/common/src/main/java/vn/edu/demo/caro/common/model/Move.java
+/Users/kimquyen/Downloads/caro-rmi-javafx-ui-pro-java11/common/src/main/java/vn/edu/demo/caro/common/model/RoomCreateRequest.java
+/Users/kimquyen/Downloads/caro-rmi-javafx-ui-pro-java11/common/src/main/java/vn/edu/demo/caro/common/model/RoomInfo.java
+/Users/kimquyen/Downloads/caro-rmi-javafx-ui-pro-java11/common/src/main/java/vn/edu/demo/caro/common/model/UserProfile.java
+/Users/kimquyen/Downloads/caro-rmi-javafx-ui-pro-java11/common/src/main/java/vn/edu/demo/caro/common/rmi/AdminService.java
+/Users/kimquyen/Downloads/caro-rmi-javafx-ui-pro-java11/common/src/main/java/vn/edu/demo/caro/common/rmi/ClientCallback.java
+/Users/kimquyen/Downloads/caro-rmi-javafx-ui-pro-java11/common/src/main/java/vn/edu/demo/caro/common/rmi/LobbyService.java
+/Users/kimquyen/Downloads/caro-rmi-javafx-ui-pro-java11/common/src/main/java/vn/edu/demo/caro/common/util/GameRules.java
