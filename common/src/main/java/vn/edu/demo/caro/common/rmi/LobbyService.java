@@ -1,6 +1,7 @@
 package vn.edu.demo.caro.common.rmi;
 
 import vn.edu.demo.caro.common.model.*;
+import vn.edu.demo.caro.common.model.Enums;
 
 import java.rmi.Remote;
 import java.rmi.RemoteException;
@@ -56,4 +57,7 @@ public interface LobbyService extends Remote {
     void respondRematch(String roomId, String responder, boolean accept) throws RemoteException;
 
     void returnToLobby(String roomId, String from) throws RemoteException;
+    void submitPostGameChoice(String roomId, String username, Enums.PostGameChoice choice) throws RemoteException;
+
+
 }

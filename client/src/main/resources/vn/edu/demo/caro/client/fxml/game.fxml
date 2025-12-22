@@ -20,6 +20,8 @@
             <VBox spacing="2">
                 <Label fx:id="lbTitle" text="Caro" styleClass="h2"/>
                 <Label fx:id="lbSub" text="Status" styleClass="muted"/>
+                <Label fx:id="lbTimer" text="" styleClass="muted"/>
+
             </VBox>
 
             <Region HBox.hgrow="ALWAYS"/>
