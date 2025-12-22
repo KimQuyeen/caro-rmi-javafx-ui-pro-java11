@@ -190,116 +190,82 @@ public class GameController implements WithContext {
     // ===== board =====
 
     private void setupBoard(int size) {
-        if (gridBoard == null) return;
+    if (gridBoard == null) return;
 
-        gridBoard.setManaged(true);
-        gridBoard.setVisible(true);
+    gridBoard.setManaged(true);
+    gridBoard.setVisible(true);
+    
+    // Reset Board
+    boardSize = size;
+    board = new Mark[size][size];
+    cellPanes = new StackPane[size][size];
+    cellButtons = new Button[size][size];
+    cellMarks = new Label[size][size];
 
-        if (spBoard != null) {
-            spBoard.setFitToWidth(true);
-            spBoard.setFitToHeight(true);
-            spBoard.setPannable(true);
-        }
-
-        boardSize = size;
-        board = new Mark[size][size];
-
-        cellPanes = new StackPane[size][size];
-        cellButtons = new Button[size][size];
-        cellMarks = new Label[size][size];
-
-        for (int r = 0; r < size; r++) {
-            for (int c = 0; c < size; c++) {
-                board[r][c] = Mark.EMPTY;
-            }
-        }
-
-        gridBoard.getChildren().clear();
-        gridBoard.getColumnConstraints().clear();
-        gridBoard.getRowConstraints().clear();
-
-        gridBoard.setGridLinesVisible(false);
-        gridBoard.setHgap(1);
-        gridBoard.setVgap(1);
-        gridBoard.setStyle("-fx-background-color: rgba(255,255,255,0.10); -fx-padding: 2;");
-
-        double cellSize = (size <= 12) ? 44 : (size <= 15 ? 38 : 30);
-
-        for (int c = 0; c < size; c++) {
-            ColumnConstraints cc = new ColumnConstraints(cellSize);
-            cc.setMinWidth(cellSize);
-            cc.setPrefWidth(cellSize);
-            cc.setMaxWidth(cellSize);
-            gridBoard.getColumnConstraints().add(cc);
-        }
-        for (int r = 0; r < size; r++) {
-            RowConstraints rc = new RowConstraints(cellSize);
-            rc.setMinHeight(cellSize);
-            rc.setPrefHeight(cellSize);
-            rc.setMaxHeight(cellSize);
-            gridBoard.getRowConstraints().add(rc);
-        }
-
-        for (int r = 0; r < size; r++) {
-            for (int c = 0; c < size; c++) {
-
-                // Button click
-                Button btn = new Button();
-                btn.setFocusTraversable(false);
-                btn.setText(""); // luôn trống
-
-                btn.setMinSize(cellSize, cellSize);
-                btn.setPrefSize(cellSize, cellSize);
-                btn.setMaxSize(cellSize, cellSize);
-
-                btn.getStyleClass().add("board-cell");
-                // Fallback style nếu CSS chưa có
-                btn.setStyle(
-                        "-fx-background-color: rgba(255,255,255,0.06);" +
-                        "-fx-border-color: rgba(255,255,255,0.25);" +
-                        "-fx-border-width: 1;" +
-                        "-fx-padding: 0;"
-                );
-
-                final int rr = r;
-                final int cc = c;
-                btn.setOnAction(e -> onCellClick(rr, cc));
-
-                // Label overlay: HIỂN THỊ QUÂN CỜ
-                Label markLb = new Label("");
-markLb.setAlignment(Pos.CENTER);
-markLb.setMouseTransparent(true);
-markLb.setMinSize(cellSize, cellSize);
-markLb.setPrefSize(cellSize, cellSize);
-markLb.setMaxSize(cellSize, cellSize);
-
-// yêu cầu của bạn
-markLb.getStyleClass().add("mark-label");
-
-
-                StackPane cell = new StackPane(btn, markLb);
-                cell.setMinSize(cellSize, cellSize);
-                cell.setPrefSize(cellSize, cellSize);
-                cell.setMaxSize(cellSize, cellSize);
-
-                cellPanes[r][c] = cell;
-                cellButtons[r][c] = btn;
-                cellMarks[r][c] = markLb;
-
-                gridBoard.add(cell, c, r);
-            }
-        }
-
-        System.out.println("[Board] children=" + gridBoard.getChildren().size() + " expect=" + (size * size));
-
-        Platform.runLater(() -> {
-            gridBoard.applyCss();
-            gridBoard.layout();
-            System.out.println("[Board] bounds=" + gridBoard.getBoundsInParent()
-                    + " | scrollViewport=" + (spBoard != null ? spBoard.getViewportBounds() : "null"));
-        });
+    for (int r = 0; r < size; r++) {
+        for (int c = 0; c < size; c++) board[r][c] = Mark.EMPTY;
     }
 
+    gridBoard.getChildren().clear();
+    gridBoard.getColumnConstraints().clear();
+    gridBoard.getRowConstraints().clear();
+
+    // --- SỬA Ở ĐÂY: Dùng Class CSS thay vì setStyle inline ---
+    gridBoard.getStyleClass().add("game-grid"); 
+    // gridBoard.setGridLinesVisible(true); // Bật lên nếu muốn debug khung
+
+    // Tính kích thước ô
+    double cellSize = (size <= 12) ? 44 : (size <= 15 ? 38 : 30);
+
+    // Tạo Constraints cho cột/dòng
+    for (int c = 0; c < size; c++) {
+        ColumnConstraints cc = new ColumnConstraints(cellSize);
+        gridBoard.getColumnConstraints().add(cc);
+    }
+    for (int r = 0; r < size; r++) {
+        RowConstraints rc = new RowConstraints(cellSize);
+        gridBoard.getRowConstraints().add(rc);
+    }
+
+    // Vẽ ô
+    for (int r = 0; r < size; r++) {
+        for (int c = 0; c < size; c++) {
+            
+            // 1) Button
+            Button btn = new Button(""); // Text rỗng
+            btn.setMinSize(cellSize, cellSize);
+            btn.setPrefSize(cellSize, cellSize);
+            btn.setMaxSize(cellSize, cellSize);
+            
+            // --- SỬA: Dùng class CSS ---
+            btn.getStyleClass().add("game-cell-btn");
+            
+            final int rr = r;
+            final int cc = c;
+            btn.setOnAction(e -> onCellClick(rr, cc));
+
+            // 2) Label hiển thị
+            Label markLb = new Label("");
+            markLb.setMouseTransparent(true);
+            markLb.setMinSize(cellSize, cellSize);
+            markLb.setPrefSize(cellSize, cellSize);
+            
+            // --- SỬA: Dùng class CSS ---
+            markLb.getStyleClass().add("game-cell-label");
+
+            // 3) StackPane
+            StackPane cell = new StackPane(btn, markLb);
+            cellPanes[r][c] = cell;
+            cellButtons[r][c] = btn;
+            cellMarks[r][c] = markLb;
+
+            gridBoard.add(cell, c, r);
+        }
+    }
+    
+    // Log debug
+    System.out.println("[Board] Setup complete. Size=" + size + " Total Cells=" + (size*size));
+}
     private void onCellClick(int r, int c) {
         if (finished || aiEnabled) return;
 
@@ -327,34 +293,39 @@ markLb.getStyleClass().add("mark-label");
         }
     }
 
-    private void applyMoveIfPossible(Move mv, Mark mark) {
-        if (mv == null || mark == null) return;
-        if (board == null || cellMarks == null || cellButtons == null) return;
+   private void applyMoveIfPossible(Move mv, Mark mark) {
+    if (mv == null || mark == null) return;
 
-        int r = mv.getRow();
-        int c = mv.getCol();
-        if (r < 0 || c < 0 || r >= boardSize || c >= boardSize) return;
+    int r = mv.getRow();
+    int c = mv.getCol();
+    if (r < 0 || c < 0 || r >= boardSize || c >= boardSize) return;
 
-        // tránh vẽ trùng
-        if (board[r][c] != Mark.EMPTY) return;
+    if (board[r][c] != Mark.EMPTY) return;
 
-        board[r][c] = mark;
+    board[r][c] = mark;
 
-        Label markLb = cellMarks[r][c];
-        Button btn = cellButtons[r][c];
+    Label markLb = cellMarks[r][c];
+    Button btn = cellButtons[r][c];
 
-        if (markLb != null) {
-            markLb.setText(mark == Mark.X ? "X" : "O");
+    if (markLb != null) {
+        markLb.setText(mark == Mark.X ? "X" : "O");
+        
+        // --- SỬA: Thêm class màu sắc ---
+        markLb.getStyleClass().removeAll("mark-x", "mark-o"); // Xóa class cũ nếu có
+        if (mark == Mark.X) {
+            markLb.getStyleClass().add("mark-x");
+        } else {
+            markLb.getStyleClass().add("mark-o");
         }
-
-        if (btn != null) {
-            // chặn click, không disable để khỏi bị theme "disabled" làm mờ/chìm
-            btn.setMouseTransparent(true);
-            btn.setOnAction(null);
-        }
-
-        System.out.println("[DRAW] r=" + r + " c=" + c + " text=" + (markLb != null ? markLb.getText() : "null"));
     }
+
+    if (btn != null) {
+        btn.setMouseTransparent(true);
+        btn.setOnAction(null);
+    }
+    
+    System.out.println("[DRAW] r=" + r + " c=" + c + " text=" + (mark == Mark.X ? "X" : "O"));
+}
 
     // ===== UI actions =====
 

@@ -98,3 +98,45 @@
     -fx-background-radius: 12;
     -fx-padding: 10;
 }
+
+.game-grid {
+    -fx-background-color: rgba(255, 255, 255, 0.15); 
+    -fx-padding: 2;
+    -fx-hgap: 1;
+    -fx-vgap: 1;
+    -fx-background-radius: 4;
+}
+
+/* Ô cờ (Button): Quan trọng là border và background */
+.game-cell-btn {
+    -fx-background-color: rgba(15, 23, 42, 0.6); /* Màu nền tối khớp với theme */
+    -fx-border-color: rgba(255, 255, 255, 0.1);  /* Viền mờ */
+    -fx-border-width: 0.5;
+    -fx-background-radius: 0;
+    -fx-border-radius: 0;
+}
+
+.game-cell-btn:hover {
+    -fx-background-color: rgba(255, 255, 255, 0.15);
+    -fx-cursor: hand;
+}
+
+/* Label chứa chữ X/O */
+.game-cell-label {
+    -fx-font-family: "Segoe UI", "Inter", sans-serif;
+    -fx-font-weight: 900;
+    -fx-font-size: 22px;
+    -fx-alignment: CENTER;
+}
+
+/* Màu riêng cho X (Đỏ rực) */
+.mark-x {
+    -fx-text-fill: #ff4d4f; 
+    -fx-effect: dropshadow(three-pass-box, rgba(255, 77, 79, 0.6), 10, 0, 0, 0);
+}
+
+/* Màu riêng cho O (Xanh sáng) */
+.mark-o {
+    -fx-text-fill: #40a9ff;
+    -fx-effect: dropshadow(three-pass-box, rgba(64, 169, 255, 0.6), 10, 0, 0, 0);
+}
