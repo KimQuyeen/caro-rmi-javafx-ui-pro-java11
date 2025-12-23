@@ -7,7 +7,8 @@ public final class Enums {
 
     public enum RoomStatus implements Serializable { WAITING, PLAYING, CLOSED }
     public enum Mark implements Serializable { EMPTY, X, O }
-    public enum GameEndReason implements Serializable { WIN, DRAW, RESIGN, ABORT }
+    public enum GameEndReason implements Serializable { WIN, DRAW, RESIGN, ABORT, TIMEOUT }
+
     public enum PostGameChoice {
         REMATCH, RETURN
     }

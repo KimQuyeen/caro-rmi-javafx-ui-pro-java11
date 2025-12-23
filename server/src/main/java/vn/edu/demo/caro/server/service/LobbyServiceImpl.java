@@ -15,48 +15,100 @@ import java.rmi.server.UnicastRemoteObject;
 import java.sql.SQLException;
 import java.time.Instant;
 import java.util.*;
+import java.util.concurrent.Executors;
+import java.util.concurrent.ScheduledExecutorService;
 import java.util.concurrent.ThreadLocalRandom;
+import java.util.concurrent.TimeUnit;
 import java.util.stream.Collectors;
 
 public class LobbyServiceImpl extends UnicastRemoteObject implements LobbyService {
 
     private final ServerState state;
 
-    // giữ để không vỡ client cũ (nhưng undo/redo mới không cần approval)
+    // ===== Pending decisions (approval-based) =====
     private final Map<String, PendingDecision> pendingUndo = new HashMap<>();
+    // "Redo" giờ là "đề nghị hòa" nhưng vẫn dùng pendingRedo để không phải đổi interface
     private final Map<String, PendingDecision> pendingRedo = new HashMap<>();
     private final Map<String, PendingDecision> pendingRematch = new HashMap<>();
+// private boolean waitingRematchDecision = false;
 
+    // ===== Move history =====
+    // NOTE: redoStack không còn dùng cho "Redo=Draw offer", nhưng giữ lại để không vỡ code cũ
     private final Map<String, Deque<MoveRecord>> moveHistory = new HashMap<>();
     private final Map<String, Deque<MoveRecord>> redoStack = new HashMap<>();
 
     // post-game choice: roomId -> (username -> choice)
     private final Map<String, Map<String, PostGameChoice>> postGameChoices = new HashMap<>();
 
+    // ===== Turn timeout checker =====
+    private final ScheduledExecutorService timeoutExec =
+            Executors.newSingleThreadScheduledExecutor(r -> {
+                Thread t = new Thread(r, "turn-timeout-checker");
+                t.setDaemon(true);
+                return t;
+            });
+
     public LobbyServiceImpl(ServerState state) throws RemoteException {
         super(0);
         this.state = state;
+        startTimeoutChecker();
     }
 
-    // ---------------- Rematch / Return to lobby (legacy API) ----------------
-@Override
-public synchronized void requestRematch(String roomId, String from) throws RemoteException {
-    // Legacy: "yêu cầu rematch" -> chuyển thành chọn REMATCH trong flow mới
-    submitPostGameChoice(roomId, from, Enums.PostGameChoice.REMATCH);
-}
+    // ============================================================
+    // Timeout
+    // ============================================================
+    private void startTimeoutChecker() {
+        timeoutExec.scheduleAtFixedRate(() -> {
+            try {
+                checkAllRoomsForTimeout();
+            } catch (Exception ignored) {
+            }
+        }, 300, 300, TimeUnit.MILLISECONDS);
+    }
 
-@Override
-public synchronized void respondRematch(String roomId, String responder, boolean accept) throws RemoteException {
-    // Legacy: accept=true => REMATCH, accept=false => RETURN
-    submitPostGameChoice(
-            roomId,
-            responder,
-            accept ? Enums.PostGameChoice.REMATCH : Enums.PostGameChoice.RETURN
-    );
-}
+    private void checkAllRoomsForTimeout() throws RemoteException {
+        synchronized (this) {
+            long now = System.currentTimeMillis();
 
+            for (Room room : state.rooms.values()) {
+                if (room == null) continue;
+                if (room.status != RoomStatus.PLAYING) continue;
+                if (!room.timed) continue;
 
-    // ---------------- Auth ----------------
+                String turnUser = room.turn;
+                if (turnUser == null || turnUser.isBlank()) continue;
+
+                long deadline = room.turnDeadlineMillis;
+                if (deadline <= 0) continue;
+
+                if (now > deadline) {
+                    String loser = turnUser;
+                    String winner = opponentOf(room, loser);
+
+                    room.turnDeadlineMillis = 0L; // chặn gọi nhiều lần
+                    endGame(room, winner, GameEndReason.TIMEOUT);
+                    broadcastRooms();
+                }
+            }
+        }
+    }
+
+    // ============================================================
+    // Rematch / Return to lobby (legacy API)
+    // ============================================================
+    @Override
+    public synchronized void requestRematch(String roomId, String from) throws RemoteException {
+        submitPostGameChoice(roomId, from, Enums.PostGameChoice.REMATCH);
+    }
+
+    @Override
+    public synchronized void respondRematch(String roomId, String responder, boolean accept) throws RemoteException {
+        submitPostGameChoice(roomId, responder, accept ? Enums.PostGameChoice.REMATCH : Enums.PostGameChoice.RETURN);
+    }
+
+    // ============================================================
+    // Auth
+    // ============================================================
     @Override
     public synchronized UserProfile register(String username, String password) throws RemoteException {
         try {
@@ -131,7 +183,9 @@ public synchronized void respondRematch(String roomId, String responder, boolean
         broadcastRooms();
     }
 
-    // ---------------- Rooms ----------------
+    // ============================================================
+    // Rooms
+    // ============================================================
     @Override
     public synchronized String createRoom(String owner, RoomCreateRequest req) throws RemoteException {
         requireOnline(owner);
@@ -218,11 +272,9 @@ public synchronized void respondRematch(String roomId, String responder, boolean
             room.turn = room.playerX;
             resetDeadline(room);
 
-            // gửi gameStart trước để client setup UI
             pushGameStart(room, room.playerX, Mark.X, true);
             pushGameStart(room, room.playerO, Mark.O, false);
 
-            // rồi snapshot để sync board + timer
             broadcastSnapshot(room);
         }
 
@@ -231,30 +283,62 @@ public synchronized void respondRematch(String roomId, String responder, boolean
     }
 
     @Override
-    public synchronized void leaveRoom(String username, String roomId) throws RemoteException {
-        Room room = state.rooms.get(roomId);
-        if (room == null) return;
+public synchronized void leaveRoom(String username, String roomId) throws RemoteException {
+    Room room = state.rooms.get(roomId);
+    if (room == null) return;
 
-        username = (username == null ? null : username.trim());
-        room.players.remove(username);
+    final String leaver = (username == null ? null : username.trim());
+    room.players.remove(leaver);
 
-        if (room.status == RoomStatus.PLAYING && room.players.size() == 1) {
-            String remaining = room.players.get(0);
-            safeCallback(remaining, cb -> cb.onGameEnded(new GameEnd(roomId, remaining, GameEndReason.ABORT)));
+    if (room.status == RoomStatus.PLAYING && room.players.size() == 1) {
+        final String remaining = room.players.get(0);
 
-            cleanupRoom(roomId);
-            state.rooms.remove(roomId);
+        safeCallback(remaining, cb -> cb.onGameEnded(new GameEnd(roomId, remaining, GameEndReason.ABORT)));
+        safeCallback(remaining, cb -> cb.onAnnouncement(leaver + " đã rời phòng và về lobby. Đang chờ người chơi khác vào..."));
 
-        } else if (room.players.isEmpty()) {
-            cleanupRoom(roomId);
-            state.rooms.remove(roomId);
-
-        } else {
-            room.status = RoomStatus.WAITING;
+        if (Objects.equals(room.owner, leaver)) {
+            room.owner = remaining;
         }
 
+        resetRoomToWaiting(roomId, room);
         broadcastRooms();
+        return;
     }
+
+
+
+    if (room.players.isEmpty()) {
+        cleanupRoom(roomId);
+        state.rooms.remove(roomId);
+        broadcastRooms();
+        return;
+    }
+
+    room.status = RoomStatus.WAITING;
+    broadcastRooms();
+}
+
+private void resetRoomToWaiting(String roomId, Room room) throws RemoteException {
+    // clear post-game / pending
+    pendingUndo.remove(roomId);
+    pendingRedo.remove(roomId);
+    pendingRematch.remove(roomId);
+    postGameChoices.remove(roomId);
+
+    // reset game state
+    room.status = RoomStatus.WAITING;
+    room.moveNo = 0;
+    room.turn = null;                 // chưa có lượt vì chưa đủ 2 người
+    room.turnDeadlineMillis = 0L;
+
+    clearBoard(room);
+
+    moveHistory.computeIfAbsent(roomId, k -> new ArrayDeque<>()).clear();
+    redoStack.computeIfAbsent(roomId, k -> new ArrayDeque<>()).clear();
+
+    // đẩy snapshot để client thấy bàn cờ trống + disabled (do status WAITING)
+    broadcastSnapshot(room);
+}
 
     @Override
     public synchronized void quickPlay(String username) throws RemoteException {
@@ -281,7 +365,9 @@ public synchronized void respondRematch(String roomId, String responder, boolean
         createRoom(username, req);
     }
 
-    // ---------------- Chat ----------------
+    // ============================================================
+    // Chat
+    // ============================================================
     @Override
     public void sendGlobalChat(ChatMessage msg) throws RemoteException {
         for (String u : sortedOnlineUsers()) safeCallback(u, cb -> cb.onGlobalChat(msg));
@@ -294,10 +380,17 @@ public synchronized void respondRematch(String roomId, String responder, boolean
         for (String u : new ArrayList<>(room.players)) safeCallback(u, cb -> cb.onRoomChat(roomId, msg));
     }
 
-    // ---------------- Gameplay ----------------
+    // ============================================================
+    // Gameplay
+    // ============================================================
     @Override
     public synchronized void makeMove(String roomId, String username, int row, int col) throws RemoteException {
         Room room = state.rooms.get(roomId);
+
+        // có nước mới thì hủy pending (Undo/Draw offer) cũ để tránh trạng thái treo
+        pendingUndo.remove(roomId);
+        pendingRedo.remove(roomId);
+
         if (room == null) throw new RemoteException("Room không tồn tại.");
         if (room.status != RoomStatus.PLAYING) throw new RemoteException("Room không ở trạng thái PLAYING.");
         if (username == null) throw new RemoteException("User null.");
@@ -312,7 +405,7 @@ public synchronized void respondRematch(String roomId, String responder, boolean
         if (!inBounds(room, row, col)) throw new RemoteException("Nước đi ngoài bàn cờ.");
         if (room.board[row][col] != Mark.EMPTY) throw new RemoteException("Ô đã được đánh.");
 
-        // new move => clear redo
+        // new move => clear redoStack legacy
         redoStack.computeIfAbsent(roomId, k -> new ArrayDeque<>()).clear();
 
         Mark mark = username.equals(room.playerX) ? Mark.X : Mark.O;
@@ -327,15 +420,15 @@ public synchronized void respondRematch(String roomId, String responder, boolean
         room.turn = next;
         resetDeadline(room);
 
-        // gửi update trước để client vẽ nhanh
+        // push update nhanh
         Move mv = new Move(row, col, moveNo, username);
         GameUpdate update = new GameUpdate(roomId, mv, mark, next);
         for (String u : new ArrayList<>(room.players)) safeCallback(u, cb -> cb.onGameUpdated(update));
 
-        // snapshot để sync turn+timer+board authoritative
+        // snapshot authoritative
         broadcastSnapshot(room);
 
-        // check win/draw
+        // win/draw
         if (isWin(room, row, col, mark)) {
             endGame(room, username, GameEndReason.WIN);
         } else if (room.moveNo >= room.boardSize * room.boardSize) {
@@ -356,127 +449,163 @@ public synchronized void respondRematch(String roomId, String responder, boolean
         broadcastRooms();
     }
 
-    // ---------------- Undo/Redo: CHỈ NƯỚC CỦA MÌNH ----------------
+    // ============================================================
+    // Undo (approval): rollback về "nước cuối của người xin"
+    // ============================================================
     @Override
-    public synchronized void requestUndo(String roomId, String from) throws RemoteException {
-        Room room = mustPlayingRoom(roomId);
-        requirePlayer(room, from);
-        from = from.trim();
+public synchronized void requestUndo(String roomId, String from) throws RemoteException {
+    Room room = mustPlayingRoom(roomId);
 
-        Deque<MoveRecord> hist = moveHistory.computeIfAbsent(roomId, k -> new ArrayDeque<>());
-        if (hist.isEmpty()) {
-            safeCallback(from, cb -> cb.onUndoResult(roomId, false, "Chưa có nước đi để Undo."));
-            return;
-        }
+    final String fromUser = (from == null ? null : from.trim());
+    requirePlayer(room, fromUser);
 
-        MoveRecord last = hist.peek();
-        if (last == null) {
-            safeCallback(from, cb -> cb.onUndoResult(roomId, false, "Chưa có nước đi để Undo."));
-            return;
-        }
-
-        // chỉ undo nếu nước cuối là của mình
-        if (!Objects.equals(last.by, from)) {
-            safeCallback(from, cb -> cb.onUndoResult(roomId, false,
-                    "Bạn chỉ được Undo nước mới nhất của chính bạn."));
-            return;
-        }
-
-        // chỉ undo khi sau đó tới lượt đối thủ (bạn vừa đánh xong)
-        if (Objects.equals(room.turn, from)) {
-            safeCallback(from, cb -> cb.onUndoResult(roomId, false,
-                    "Không thể Undo lúc đang tới lượt bạn."));
-            return;
-        }
-
-        hist.pop();
-        redoStack.computeIfAbsent(roomId, k -> new ArrayDeque<>()).push(last);
-
-        room.board[last.row][last.col] = Mark.EMPTY;
-        room.moveNo = Math.max(0, room.moveNo - 1);
-
-        // trả lượt về cho người undo
-        room.turn = from;
-        resetDeadline(room);
-
-        broadcastSnapshot(room);
-
-        for (String u : new ArrayList<>(room.players)) {
-            safeCallback(u, cb -> cb.onUndoResult(roomId, true,
-                    "Undo: (" + last.row + "," + last.col + "). Lượt: " + room.turn));
-        }
+    final String opp = opponentOf(room, fromUser);
+    if (opp == null) {
+        safeCallback(fromUser, cb -> cb.onUndoResult(roomId, false, "Không có đối thủ để xin Undo."));
+        return;
     }
 
+    if (pendingUndo.get(roomId) != null) {
+        safeCallback(fromUser, cb -> cb.onUndoResult(roomId, false, "Đang có yêu cầu Undo chờ xử lý."));
+        return;
+    }
+
+    UndoPlan plan = computeUndoPlan(roomId, room, fromUser, opp);
+    if (!plan.allowed) {
+        safeCallback(fromUser, cb -> cb.onUndoResult(roomId, false, plan.reason));
+        return;
+    }
+
+    pendingUndo.put(roomId, new PendingDecision(fromUser, opp));
+    safeCallback(opp, cb -> cb.onUndoRequested(roomId, fromUser));
+    safeCallback(fromUser, cb -> cb.onUndoResult(roomId, true, "Đã gửi yêu cầu Undo. Chờ đối thủ phản hồi..."));
+}
+
+
+  @Override
+public synchronized void respondUndo(String roomId, String responder, boolean accept) throws RemoteException {
+    Room room = state.rooms.get(roomId);
+    if (room == null) return;
+
+    // Chuẩn hoá responder chỉ 1 lần
+    String responderUser = (responder == null ? null : responder.trim());
+    requirePlayer(room, responderUser);
+
+    PendingDecision pending = pendingUndo.get(roomId);
+    if (pending == null) {
+        safeCallback(responderUser, cb -> cb.onUndoResult(roomId, false, "Không có yêu cầu Undo nào để phản hồi."));
+        return;
+    }
+
+    // chỉ người nhận request mới được phản hồi
+    if (!Objects.equals(pending.to, responderUser)) {
+        safeCallback(responderUser, cb -> cb.onUndoResult(roomId, false, "Bạn không phải người nhận yêu cầu Undo này."));
+        return;
+    }
+
+    String requester = pending.from;
+    pendingUndo.remove(roomId);
+
+    // tạo biến final để dùng trong lambda (tránh lỗi effectively final)
+    final String requesterUser = requester;
+    final String responderFinal = responderUser;
+    final String opp = responderFinal; // người đối diện trong flow này chính là responder
+
+    if (!accept) {
+        safeCallback(requesterUser, cb -> cb.onUndoResult(roomId, false, responderFinal + " đã từ chối Undo."));
+        safeCallback(responderFinal, cb -> cb.onUndoResult(roomId, true, "Bạn đã từ chối Undo."));
+        return;
+    }
+
+    // Tính kế hoạch undo theo rule của bạn (ví dụ: xoá X của đối thủ + O của requester)
+    UndoPlan plan = computeUndoPlan(roomId, room, requesterUser, opp);
+    if (!plan.allowed) {
+        safeCallback(requesterUser, cb -> cb.onUndoResult(roomId, false, "Không thể Undo: " + plan.reason));
+        safeCallback(responderFinal, cb -> cb.onUndoResult(roomId, false, "Không thể Undo: " + plan.reason));
+        return;
+    }
+
+    List<MoveRecord> removed = applyUndoRollback(roomId, room, requesterUser, plan.rollbackCount);
+
+    String detail = removed.stream()
+            .map(r -> r.by + ":(" + r.row + "," + r.col + ")")
+            .collect(Collectors.joining(", "));
+
+    for (String u : new ArrayList<>(room.players)) {
+        safeCallback(u, cb -> cb.onUndoResult(roomId, true,
+                "Undo được chấp nhận. Đã xóa: " + detail + ". Lượt: " + room.turn));
+    }
+
+    broadcastRooms();
+}
+
+    // ============================================================
+    // "Redo" (approval): đổi nghĩa thành ĐỀ NGHỊ HÒA (DRAW OFFER)
+    // ============================================================
     @Override
-    public synchronized void requestRedo(String roomId, String from) throws RemoteException {
-        Room room = mustPlayingRoom(roomId);
-        requirePlayer(room, from);
-        from = from.trim();
+public synchronized void requestRedo(String roomId, String from) throws RemoteException {
+    Room room = mustPlayingRoom(roomId);
 
-        Deque<MoveRecord> redo = redoStack.computeIfAbsent(roomId, k -> new ArrayDeque<>());
-        if (redo.isEmpty()) {
-            safeCallback(from, cb -> cb.onRedoResult(roomId, false, "Không có nước để Redo."));
-            return;
-        }
+    final String fromUser = (from == null ? null : from.trim());
+    requirePlayer(room, fromUser);
 
-        MoveRecord mv = redo.peek();
-        if (mv == null) {
-            safeCallback(from, cb -> cb.onRedoResult(roomId, false, "Không có nước để Redo."));
-            return;
-        }
+    final String opp = opponentOf(room, fromUser);
+    if (opp == null) {
+        safeCallback(fromUser, cb -> cb.onRedoResult(roomId, false, "Không có đối thủ để đề nghị hòa."));
+        return;
+    }
 
-        // chỉ redo nước của mình
-        if (!Objects.equals(mv.by, from)) {
-            safeCallback(from, cb -> cb.onRedoResult(roomId, false,
-                    "Bạn chỉ được Redo nước của chính bạn."));
-            return;
-        }
+    if (pendingRedo.get(roomId) != null) {
+        safeCallback(fromUser, cb -> cb.onRedoResult(roomId, false, "Đang có đề nghị hòa chờ xử lý."));
+        return;
+    }
 
-        // redo chỉ khi tới lượt bạn
-        if (!Objects.equals(room.turn, from)) {
-            safeCallback(from, cb -> cb.onRedoResult(roomId, false,
-                    "Chỉ được Redo khi đang tới lượt bạn."));
-            return;
-        }
+    pendingRedo.put(roomId, new PendingDecision(fromUser, opp));
+    safeCallback(opp, cb -> cb.onRedoRequested(roomId, fromUser));
+    safeCallback(fromUser, cb -> cb.onRedoResult(roomId, true, "Đã gửi đề nghị hòa. Chờ đối thủ phản hồi..."));
+}
 
-        redo.pop();
 
-        if (!inBounds(room, mv.row, mv.col) || room.board[mv.row][mv.col] != Mark.EMPTY) {
-            safeCallback(from, cb -> cb.onRedoResult(roomId, false,
-                    "Không thể Redo vì ô không hợp lệ / đã có quân."));
-            return;
-        }
+   @Override
+public synchronized void respondRedo(String roomId, String responder, boolean accept) throws RemoteException {
+    Room room = state.rooms.get(roomId);
+    if (room == null) return;
 
-        room.board[mv.row][mv.col] = mv.mark;
-        int newNo = ++room.moveNo;
+    final String responderUser = (responder == null ? null : responder.trim());
+    requirePlayer(room, responderUser);
 
-        // push record mới với moveNo mới
-        moveHistory.computeIfAbsent(roomId, k -> new ArrayDeque<>())
-                .push(new MoveRecord(mv.row, mv.col, mv.mark, mv.by, newNo));
+    final PendingDecision pending = pendingRedo.get(roomId);
+    if (pending == null) {
+        safeCallback(responderUser, cb -> cb.onRedoResult(roomId, false, "Không có yêu cầu Redo nào để phản hồi."));
+        return;
+    }
 
-        // sau redo -> tới lượt đối thủ
-        String opp = opponentOf(room, from);
-        if (opp != null) room.turn = opp;
+    if (!Objects.equals(pending.to, responderUser)) {
+        safeCallback(responderUser, cb -> cb.onRedoResult(roomId, false, "Bạn không phải người nhận yêu cầu Redo này."));
+        return;
+    }
 
-        resetDeadline(room);
-        broadcastSnapshot(room);
+    final String requester = pending.from;
+    pendingRedo.remove(roomId);
 
+    if (!accept) {
+        safeCallback(requester, cb -> cb.onRedoResult(roomId, false, responderUser + " đã từ chối Redo."));
+        safeCallback(responderUser, cb -> cb.onRedoResult(roomId, true, "Bạn đã từ chối Redo."));
+        return;
+    }
+
+        // Accept => kết thúc ván hòa
         for (String u : new ArrayList<>(room.players)) {
-            safeCallback(u, cb -> cb.onRedoResult(roomId, true,
-                    "Redo: (" + mv.row + "," + mv.col + "). Lượt: " + room.turn));
+            safeCallback(u, cb -> cb.onAnnouncement("Hai bên đồng ý hòa ván."));
         }
+        endGame(room, null, GameEndReason.DRAW);
+        broadcastRooms();
     }
 
-    // giữ cho client cũ không chết (nhưng không dùng)
-    @Override public synchronized void respondUndo(String roomId, String responder, boolean accept) throws RemoteException {
-        safeCallback(responder, cb -> cb.onUndoResult(roomId, false, "Undo không cần đối thủ đồng ý."));
-    }
-    @Override public synchronized void respondRedo(String roomId, String responder, boolean accept) throws RemoteException {
-        safeCallback(responder, cb -> cb.onRedoResult(roomId, false, "Redo không cần đối thủ đồng ý."));
-    }
-
-    // ---------------- Post-game choice: REMATCH / RETURN ----------------
-@Override
+    // ============================================================
+    // Post-game choice: REMATCH / RETURN
+    // ============================================================
+ @Override
 public synchronized void submitPostGameChoice(String roomId, String username, Enums.PostGameChoice choice)
         throws RemoteException {
 
@@ -484,38 +613,73 @@ public synchronized void submitPostGameChoice(String roomId, String username, En
     if (room == null) throw new RemoteException("Room không tồn tại.");
 
     final String user = (username == null ? null : username.trim());
-    requirePlayer(room, user);
 
-    postGameChoices.computeIfAbsent(roomId, k -> new HashMap<>()).put(user, choice);
+    // dùng helper hậu ván (tự re-attach nếu cần)
+    requirePostGamePlayer(room, user);
+
     final String opp = opponentOf(room, user);
 
-    // 1) RETURN => cả 2 về lobby
+    // clear các pending kiểu Undo/Draw-offer vì đã qua ván
+    pendingUndo.remove(roomId);
+    pendingRedo.remove(roomId);
+    pendingRematch.remove(roomId);
+
+    // Lưu choice (KHÔNG remove map ngay tại đây)
+    Map<String, PostGameChoice> choices = postGameChoices.computeIfAbsent(roomId, k -> new HashMap<>());
+    choices.put(user, choice);
+
+    // ===== 1) RETURN =====
     if (choice == Enums.PostGameChoice.RETURN) {
-        if (opp != null) {
-            safeCallback(opp, cb -> cb.onAnnouncement(user + " đã chọn Return to lobby."));
+        // remove user khỏi phòng
+        room.players.remove(user);
+
+        // callback cho người rời
+        safeCallback(user, cb -> cb.onReturnToLobby(roomId, "Bạn đã rời phòng. Trở về sảnh."));
+
+        // dọn choice map vì đã có người rời
+        postGameChoices.remove(roomId);
+
+        // còn 1 người => giữ phòng WAITING, reset bàn để chờ người mới
+        if (!room.players.isEmpty()) {
+            String remaining = room.players.get(0);
+
+            safeCallback(remaining, cb -> cb.onAnnouncement(user + " đã về lobby và không chơi nữa. Bạn đang chờ người khác vào..."));
+
+            // nếu owner rời, chuyển owner
+            if (Objects.equals(room.owner, user)) {
+                room.owner = remaining;
+            }
+
+            resetRoomToWaiting(roomId, room);
+            broadcastRooms();
+            return;
         }
-        for (String u : new ArrayList<>(room.players)) {
-            safeCallback(u, cb -> cb.onReturnToLobby(roomId, "Trận kết thúc. Trở về sảnh."));
-        }
+
+        // không còn ai => xóa phòng
         cleanupRoom(roomId);
         state.rooms.remove(roomId);
         broadcastRooms();
         return;
     }
 
-    // 2) REMATCH
+    // ===== 2) REMATCH =====
     if (opp == null) {
-        safeCallback(user, cb -> cb.onAnnouncement("Đã chọn Rematch. Chờ đối thủ..."));
+        // chỉ còn 1 người trong room => không thể rematch
+        safeCallback(user, cb -> cb.onAnnouncement("Không có đối thủ để rematch. Đang chờ người chơi khác vào..."));
         return;
     }
 
-    // báo đối thủ biết bạn đã chọn rematch
-    safeCallback(opp, cb -> cb.onAnnouncement(user + " đã chọn Rematch. Bạn chọn Rematch hoặc Return."));
+    PostGameChoice oppChoice = choices.get(opp);
 
-    Enums.PostGameChoice oppChoice = postGameChoices.get(roomId).get(opp);
+    if (oppChoice == null) {
+        // đối thủ chưa chọn => gửi request rematch cho họ
+        safeCallback(opp, cb -> cb.onRematchRequested(roomId, user));
+        safeCallback(user, cb -> cb.onAnnouncement("Đã gửi yêu cầu Rematch. Chờ đối thủ quyết định..."));
+        return;
+    }
 
-    // nếu đối thủ cũng chọn rematch => bắt đầu ván mới
     if (oppChoice == Enums.PostGameChoice.REMATCH) {
+        // cả 2 đồng ý rematch => start match
         postGameChoices.remove(roomId);
 
         resetBoardAndSwap(room);
@@ -530,13 +694,15 @@ public synchronized void submitPostGameChoice(String roomId, String username, En
             safeCallback(u, cb -> cb.onAnnouncement("Rematch bắt đầu. X đi trước."));
         }
         broadcastRooms();
-    } else {
-        safeCallback(user, cb -> cb.onAnnouncement("Đã chọn Rematch. Chờ đối thủ quyết định..."));
+        return;
     }
+
+    // oppChoice == RETURN
+    safeCallback(user, cb -> cb.onAnnouncement(opp + " đã chọn Return (từ chối Rematch)."));
 }
 
 
-    @Override
+   @Override
 public synchronized void returnToLobby(String roomId, String from) throws RemoteException {
     Room room = state.rooms.get(roomId);
     if (room == null) return;
@@ -544,25 +710,35 @@ public synchronized void returnToLobby(String roomId, String from) throws Remote
     final String actor = (from == null ? null : from.trim());
     requirePlayer(room, actor);
 
-    final String opp = opponentOf(room, actor);
-    if (opp != null) {
-        safeCallback(opp, cb -> cb.onAnnouncement(actor + " đã chọn Return to lobby."));
-        if (room.status == RoomStatus.PLAYING) {
-            safeCallback(opp, cb -> cb.onGameEnded(new GameEnd(roomId, opp, GameEndReason.ABORT)));
-        }
+    // actor rời phòng
+    room.players.remove(actor);
+
+    // callback cho actor
+    safeCallback(actor, cb -> cb.onReturnToLobby(roomId, "Bạn đã rời phòng. Trở về sảnh."));
+
+    // nếu còn 1 người trong phòng -> thông báo + reset WAITING, không xóa phòng
+    if (!room.players.isEmpty()) {
+        String remaining = room.players.get(0);
+
+        safeCallback(remaining, cb -> cb.onAnnouncement(actor + " đã về lobby. Bạn đang chờ người khác vào..."));
+        safeCallback(remaining, cb -> cb.onGameEnded(new GameEnd(roomId, remaining, GameEndReason.ABORT)));
+
+        if (Objects.equals(room.owner, actor)) room.owner = remaining;
+
+        resetRoomToWaiting(roomId, room);
+        broadcastRooms();
+        return;
     }
 
-    for (String u : new ArrayList<>(room.players)) {
-        safeCallback(u, cb -> cb.onReturnToLobby(roomId, "Trở về sảnh."));
-    }
-
+    // không còn ai -> xóa phòng
     cleanupRoom(roomId);
     state.rooms.remove(roomId);
     broadcastRooms();
 }
 
-
-    // ---------------- Ranking & friends ----------------
+    // ============================================================
+    // Ranking & friends
+    // ============================================================
     @Override
     public List<UserProfile> getLeaderboard(int top) throws RemoteException {
         try {
@@ -610,7 +786,9 @@ public synchronized void returnToLobby(String roomId, String from) throws Remote
         return sortedOnlineUsers();
     }
 
-    // ---------------- Internal helpers ----------------
+    // ============================================================
+    // Internal helpers
+    // ============================================================
     private void resetDeadline(Room room) {
         if (room.timed) {
             room.turnDeadlineMillis = System.currentTimeMillis() + room.timeLimitSeconds * 1000L;
@@ -644,37 +822,39 @@ public synchronized void returnToLobby(String roomId, String from) throws Remote
         }
     }
 
-    private void endGame(Room room, String winner, GameEndReason reason) throws RemoteException {
-        try {
-            postGameChoices.remove(room.id);
+   private void endGame(Room room, String winner, GameEndReason reason) throws RemoteException {
+    try {
+        postGameChoices.remove(room.id);
 
-            // stop timer snapshot (optional nhưng nên)
-            room.turnDeadlineMillis = 0L;
+        // stop timer
+        room.turnDeadlineMillis = 0L;
 
-            GameEnd end = new GameEnd(room.id, winner, reason);
-            for (String u : new ArrayList<>(room.players)) safeCallback(u, cb -> cb.onGameEnded(end));
+        GameEnd end = new GameEnd(room.id, winner, reason);
+        for (String u : new ArrayList<>(room.players)) safeCallback(u, cb -> cb.onGameEnded(end));
 
-            String x = room.playerX;
-            String o = room.playerO;
-            state.matchDao.insertMatch(room.id, x, o, winner, reason.name());
+        String x = room.playerX;
+        String o = room.playerO;
+        state.matchDao.insertMatch(room.id, x, o, winner, reason.name());
 
-            if (reason == GameEndReason.WIN || reason == GameEndReason.RESIGN) {
-                String loser = (winner == null) ? null : (winner.equals(x) ? o : x);
-                applyEloAndStats(winner, loser, false);
-            } else if (reason == GameEndReason.DRAW) {
-                applyEloAndStats(x, o, true);
-            }
-
-            room.status = RoomStatus.WAITING;
-
-            // gửi snapshot để client dừng timer, đồng bộ final state
-            broadcastSnapshot(room);
-
-            broadcastLeaderboard();
-        } catch (SQLException e) {
-            throw new RemoteException("DB error (endGame): " + e.getMessage(), e);
+        if (reason == GameEndReason.WIN || reason == GameEndReason.RESIGN) {
+            String loser = (winner == null) ? null : (winner.equals(x) ? o : x);
+            applyEloAndStats(winner, loser, false);
+        } else if (reason == GameEndReason.DRAW) {
+            applyEloAndStats(x, o, true);
         }
+
+        room.status = RoomStatus.WAITING;
+
+        // IMPORTANT: kết thúc ván => không còn lượt
+        room.turn = null;
+
+        broadcastSnapshot(room);
+        broadcastLeaderboard();
+    } catch (SQLException e) {
+        throw new RemoteException("DB error (endGame): " + e.getMessage(), e);
     }
+}
+
 
     private void applyEloAndStats(String a, String b, boolean draw) throws SQLException {
         if (a == null || b == null) return;
@@ -686,9 +866,11 @@ public synchronized void returnToLobby(String roomId, String from) throws Remote
         int bw = rb.wins, bl = rb.losses, bd = rb.draws, be = rb.elo;
 
         if (draw) {
-            ad++; bd++;
+            ad++;
+            bd++;
         } else {
-            aw++; bl++;
+            aw++;
+            bl++;
             ae += 20;
             be = Math.max(100, be - 20);
         }
@@ -718,6 +900,23 @@ public synchronized void returnToLobby(String roomId, String from) throws Remote
             throw new RemoteException("Room không ở trạng thái PLAYING.");
         return room;
     }
+    private void requirePostGamePlayer(Room room, String user) throws RemoteException {
+    if (user == null || user.trim().isEmpty()) throw new RemoteException("User không hợp lệ.");
+    user = user.trim();
+
+    if (room.players.contains(user)) return;
+
+    // Nếu user vừa là người chơi của ván trước (playerX/playerO) và phòng còn chỗ
+    boolean wasParticipant = Objects.equals(room.playerX, user) || Objects.equals(room.playerO, user);
+
+    if (wasParticipant && room.status == RoomStatus.WAITING && room.players.size() < 2) {
+        room.players.add(user); // re-attach để xử lý rematch hậu ván
+        return;
+    }
+
+    throw new RemoteException("Bạn không ở trong phòng.");
+}
+
 
     private void requirePlayer(Room room, String user) throws RemoteException {
         if (user == null || user.trim().isEmpty()) throw new RemoteException("User không hợp lệ.");
@@ -740,7 +939,7 @@ public synchronized void returnToLobby(String roomId, String from) throws Remote
 
     // blockTwoEnds=true: cần ít nhất 1 đầu "mở"; biên được coi là mở
     private boolean checkWin5(Room room, int row, int col, Mark mark, boolean blockTwoEnds) {
-        int[][] dirs = {{1,0},{0,1},{1,1},{1,-1}};
+        int[][] dirs = {{1, 0}, {0, 1}, {1, 1}, {1, -1}};
         for (int[] d : dirs) {
             int count = 1;
             int openEnds = 0;
@@ -748,14 +947,17 @@ public synchronized void returnToLobby(String roomId, String from) throws Remote
             int r = row + d[0], c = col + d[1];
             while (inBounds(room, r, c) && room.board[r][c] == mark) {
                 count++;
-                r += d[0]; c += d[1];
+                r += d[0];
+                c += d[1];
             }
             if (!inBounds(room, r, c) || room.board[r][c] == Mark.EMPTY) openEnds++;
 
-            r = row - d[0]; c = col - d[1];
+            r = row - d[0];
+            c = col - d[1];
             while (inBounds(room, r, c) && room.board[r][c] == mark) {
                 count++;
-                r -= d[0]; c -= d[1];
+                r -= d[0];
+                c -= d[1];
             }
             if (!inBounds(room, r, c) || room.board[r][c] == Mark.EMPTY) openEnds++;
 
@@ -821,16 +1023,22 @@ public synchronized void returnToLobby(String roomId, String from) throws Remote
         try {
             List<UserProfile> lb = state.userDao.topElo(50);
             for (String u : sortedOnlineUsers()) safeCallback(u, cb -> cb.onLeaderboardUpdated(lb));
-        } catch (SQLException ignored) {}
+        } catch (SQLException ignored) {
+        }
     }
 
     private void safeCallback(String user, CallbackCall call) {
         var s = state.online.get(user);
         if (s == null || s.callback == null) return;
-        try { call.run(s.callback); } catch (Exception ignored) {}
+        try {
+            call.run(s.callback);
+        } catch (Exception ignored) {
+        }
     }
 
-    // ===== Snapshot helpers =====
+    // ============================================================
+    // Snapshot helpers
+    // ============================================================
     private Mark[][] copyBoard(Room room) {
         Mark[][] b = new Mark[room.boardSize][room.boardSize];
         for (int r = 0; r < room.boardSize; r++) {
@@ -856,15 +1064,82 @@ public synchronized void returnToLobby(String roomId, String from) throws Remote
         }
     }
 
-   
+    // ============================================================
+    // Undo core logic
+    // ============================================================
+    private UndoPlan computeUndoPlan(String roomId, Room room, String requester, String opponent) {
+        Deque<MoveRecord> hist = moveHistory.computeIfAbsent(roomId, k -> new ArrayDeque<>());
+        if (hist.isEmpty()) return UndoPlan.no("Chưa có nước đi để Undo.");
 
+        MoveRecord last = hist.peek(); // newest
+        if (last == null) return UndoPlan.no("Lịch sử không hợp lệ.");
+
+        // Case A: requester vừa đánh xong, đối thủ chưa đánh (last.by == requester)
+        // -> xóa 1 nước của requester, trả lượt requester
+        if (Objects.equals(last.by, requester)) {
+            return UndoPlan.ok(1);
+        }
+
+        // Case B: đối thủ vừa đánh xong, tới lượt requester (last.by == opponent)
+        // -> cần có nước trước đó là requester để "quay lại nước cuối của requester"
+        if (Objects.equals(last.by, opponent)) {
+            if (hist.size() < 2) return UndoPlan.no("Không đủ lịch sử để Undo.");
+            Iterator<MoveRecord> it = hist.iterator();
+            MoveRecord m1 = it.next(); // last (opponent)
+            MoveRecord m2 = it.next(); // previous
+            if (m2 == null) return UndoPlan.no("Không đủ lịch sử để Undo.");
+            if (!Objects.equals(m2.by, requester)) {
+                return UndoPlan.no("Không thể Undo: nước trước đó không phải của bạn.");
+            }
+            return UndoPlan.ok(2);
+        }
+
+        return UndoPlan.no("Không thể Undo: lịch sử nước đi không đúng trạng thái.");
+    }
+
+    private List<MoveRecord> applyUndoRollback(String roomId, Room room, String requester, int rollbackCount)
+            throws RemoteException {
+
+        Deque<MoveRecord> hist = moveHistory.computeIfAbsent(roomId, k -> new ArrayDeque<>());
+        if (hist.size() < rollbackCount) throw new RemoteException("Không đủ lịch sử để rollback.");
+
+        List<MoveRecord> removed = new ArrayList<>(rollbackCount);
+
+        for (int i = 0; i < rollbackCount; i++) {
+            MoveRecord mv = hist.pop();
+            removed.add(mv);
+            if (inBounds(room, mv.row, mv.col)) {
+                room.board[mv.row][mv.col] = Mark.EMPTY;
+            }
+        }
+
+        room.moveNo = hist.isEmpty() ? 0 : hist.peek().moveNo;
+        room.turn = requester;
+        resetDeadline(room);
+
+        // clear legacy redo stack (không dùng nữa)
+        redoStack.computeIfAbsent(roomId, k -> new ArrayDeque<>()).clear();
+
+        broadcastSnapshot(room);
+        return removed;
+    }
+
+    // ============================================================
+    // Types
+    // ============================================================
     @FunctionalInterface
-    private interface CallbackCall { void run(ClientCallback cb) throws Exception; }
+    private interface CallbackCall {
+        void run(ClientCallback cb) throws Exception;
+    }
 
     private static class PendingDecision {
         final String from;
         final String to;
-        PendingDecision(String from, String to) { this.from = from; this.to = to; }
+
+        PendingDecision(String from, String to) {
+            this.from = from;
+            this.to = to;
+        }
     }
 
     private static class MoveRecord {
@@ -882,4 +1157,26 @@ public synchronized void returnToLobby(String roomId, String from) throws Remote
             this.moveNo = moveNo;
         }
     }
+
+    private static class UndoPlan {
+        final boolean allowed;
+        final int rollbackCount;
+        final String reason;
+
+        private UndoPlan(boolean allowed, int rollbackCount, String reason) {
+            this.allowed = allowed;
+            this.rollbackCount = rollbackCount;
+            this.reason = reason;
+        }
+
+        static UndoPlan ok(int rollbackCount) {
+            return new UndoPlan(true, rollbackCount, null);
+        }
+
+        static UndoPlan no(String reason) {
+            return new UndoPlan(false, 0, reason);
+        }
+    }
+
+
 }

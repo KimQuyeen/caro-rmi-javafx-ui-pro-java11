@@ -14,7 +14,7 @@ import java.util.List;
 public class Room {
     public final String id;
     public final String name;
-    public final String owner;
+public String owner;
     public final Instant createdAt = Instant.now();
     public volatile RoomStatus status = RoomStatus.WAITING;
     public final List<String> players = new ArrayList<>(2);
@@ -35,6 +35,9 @@ public class Room {
     public volatile String turn;
     public volatile int moveNo = 0;
 
+
+    public String getOwner() { return owner; }
+public void setOwner(String owner) { this.owner = owner; }
     // --- move history for undo/redo ---
 public final List<Move> history = new ArrayList<>();
 public final Deque<Move> redoStack = new ArrayDeque<>();

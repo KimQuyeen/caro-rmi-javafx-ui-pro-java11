@@ -50,12 +50,17 @@ public class ClientCallbackImpl extends UnicastRemoteObject implements ClientCal
         });
     }
 
-    @Override
-    public void onAnnouncement(String text) throws RemoteException {
-        Platform.runLater(() -> {
-            if (mainController != null) mainController.pushStatus("Thông báo: " + text);
-        });
-    }
+   @Override
+public void onAnnouncement(String text) throws RemoteException {
+    Platform.runLater(() -> {
+        if (mainController != null) {
+            mainController.pushStatus("Thông báo: " + text);
+        }
+        if (gameController != null) {
+            gameController.onAnnouncement(text);
+        }
+    });
+}
 
     @Override
     public void onWarning(String text) throws RemoteException {

@@ -6,6 +6,7 @@ vn/edu/demo/caro/server/state/OnlineSession.class
 vn/edu/demo/caro/server/service/LobbyServiceImpl$CallbackCall.class
 vn/edu/demo/caro/server/service/AdminServiceImpl.class
 vn/edu/demo/caro/server/dao/UserDao$UserRecord.class
+vn/edu/demo/caro/server/service/LobbyServiceImpl$UndoPlan.class
 vn/edu/demo/caro/server/state/Room.class
 vn/edu/demo/caro/server/db/DbConfig.class
 vn/edu/demo/caro/server/dao/UserDao.class
