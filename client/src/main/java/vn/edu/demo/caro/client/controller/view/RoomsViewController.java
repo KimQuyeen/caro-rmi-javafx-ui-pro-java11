@@ -1,5 +1,6 @@
 package vn.edu.demo.caro.client.controller.view;
 
+import javafx.application.Platform;
 import javafx.fxml.FXML;
 import javafx.scene.control.*;
 import javafx.scene.layout.VBox;
@@ -52,51 +53,53 @@ public class RoomsViewController implements WithContext {
     }
 
     @FXML
-    private void onCreateRoom() {
-        try {
-            String roomName = tfRoomName.getText() == null ? "" : tfRoomName.getText().trim();
-            if (roomName.isEmpty()) {
-                showInfo("Lỗi", "Tên phòng không được trống.");
-                return;
+private void onCreateRoom() {
+    try {
+        String roomName = tfRoomName.getText() == null ? "" : tfRoomName.getText().trim();
+        if (roomName.isEmpty()) {
+            showInfo("Lỗi", "Tên phòng không được trống.");
+            return;
+        }
+
+        RoomCreateRequest req = new RoomCreateRequest();
+        req.setRoomName(roomName);
+
+        Integer size = cbBoardSize.getValue();
+        req.setBoardSize(size == null ? 15 : size);
+        req.setBlockTwoEnds(chkBlockTwoEnds.isSelected());
+
+        req.setTimed(chkTimed.isSelected());
+        Integer sec = cbTimeSeconds.getValue();
+        req.setTimeLimitSeconds(req.isTimed() ? (sec == null ? 60 : sec) : 0);
+
+        req.setPasswordEnabled(chkPassword.isSelected());
+        String pw = pfRoomPassword.getText() == null ? "" : pfRoomPassword.getText();
+        if (req.isPasswordEnabled() && pw.trim().isEmpty()) {
+            showInfo("Lỗi", "Bạn đã bật mật khẩu nhưng chưa nhập mật khẩu.");
+            return;
+        }
+        req.setPassword(req.isPasswordEnabled() ? pw : null);
+
+        // chạy nền cho chắc (RMI có thể block)
+        ctx.io().execute(() -> {
+            try {
+                String roomId = ctx.lobby.createRoom(ctx.username, req);
+                ctx.currentRoomId = roomId;
+
+                Platform.runLater(() ->
+                    showInfo("OK", "Tạo phòng thành công. Đang chờ người chơi thứ 2...")
+                );
+
+            } catch (Exception e) {
+                Platform.runLater(() -> showInfo("Lỗi", e.getMessage()));
             }
+        });
 
-            var req = new RoomCreateRequest();
-            req.setRoomName(roomName);
-
-            Integer size = cbBoardSize.getValue();
-            req.setBoardSize(size == null ? 15 : size);
-            req.setBlockTwoEnds(chkBlockTwoEnds.isSelected());
-
-            req.setTimed(chkTimed.isSelected());
-            Integer sec = cbTimeSeconds.getValue();
-            req.setTimeLimitSeconds(req.isTimed() ? (sec == null ? 60 : sec) : 0);
-
-            req.setPasswordEnabled(chkPassword.isSelected());
-            String pw = pfRoomPassword.getText() == null ? "" : pfRoomPassword.getText();
-            if (req.isPasswordEnabled() && pw.trim().isEmpty()) {
-                showInfo("Lỗi", "Bạn đã bật mật khẩu nhưng chưa nhập mật khẩu.");
-                return;
-            }
-            req.setPassword(req.isPasswordEnabled() ? pw : null);
-
-            // Create room: room constructor đã add owner vào players.
-            String roomId = ctx.lobby.createRoom(ctx.username, req);
-
-// JOIN luôn (an toàn, vì server joinRoom có contains-check nên không add trùng)
-boolean ok = ctx.lobby.joinRoom(ctx.username, roomId, req.isPasswordEnabled() ? req.getPassword() : null);
-if (!ok) {
-    showInfo("Lỗi", "Không thể vào phòng vừa tạo (phòng đã bắt đầu hoặc đầy).");
-    return;
+    } catch (Exception e) {
+        showInfo("Lỗi", e.getMessage());
+    }
 }
 
-ctx.currentRoomId = roomId;
-showInfo("OK", "Tạo phòng thành công. Đang chờ người chơi thứ 2...");
-
-
-        } catch (Exception e) {
-            showInfo("Lỗi", e.getMessage());
-        }
-    }
 
     private String askPasswordIfNeeded(RoomInfo room) {
         if (room == null) return null;
@@ -113,13 +116,13 @@ showInfo("OK", "Tạo phòng thành công. Đang chờ người chơi thứ 2...
                 .orElse(null);
     }
 
-   @FXML
+@FXML
 private void onJoinSelected() {
-    var room = lvRooms.getSelectionModel().getSelectedItem();
+    RoomInfo room = lvRooms.getSelectionModel().getSelectedItem();
     if (room == null) return;
 
-    if (room.getStatus() != vn.edu.demo.caro.common.model.Enums.RoomStatus.WAITING) {
-        showInfo("Không thể vào", "Phòng đã bắt đầu (PLAYING) hoặc đã đóng.");
+    if (room.getStatus() != Enums.RoomStatus.WAITING) {
+        showInfo("Không thể vào", "Phòng đã bắt đầu hoặc đã đóng.");
         return;
     }
     if (room.getCurrentPlayers() >= room.getMaxPlayers()) {
@@ -128,24 +131,39 @@ private void onJoinSelected() {
     }
 
     String pw = askPasswordIfNeeded(room);
-
-    try {
-        boolean ok = ctx.lobby.joinRoom(ctx.username, room.getId(), pw);
-        if (!ok) {
-            showInfo("Không thể vào", "Phòng đã đầy hoặc đã bắt đầu.");
-            return;
-        }
-
-        // CHỈ lưu room hiện tại để chat/phục vụ UI nếu cần
-        ctx.currentRoomId = room.getId();
-
-        // Không chuyển scene ở đây
-        showInfo("Đã vào phòng", "Đang chờ đủ 2 người để bắt đầu...");
-
-    } catch (Exception e) {
-        showInfo("Lỗi", e.getMessage());
+    if (room.isPasswordEnabled() && (pw == null || pw.isBlank())) {
+        showInfo("Không thể vào", "Bạn chưa nhập mật khẩu.");
+        return;
     }
+
+    final String roomId = room.getId();   // hoặc room.getRoomId() đều được vì bạn có alias
+    final String user = ctx.username;
+
+    lvRooms.setDisable(true);
+
+    ctx.io().execute(() -> {
+        try {
+            boolean ok = ctx.lobby.joinRoom(user, roomId, pw);
+            if (!ok) {
+                Platform.runLater(() -> showInfo("Không thể vào", "Phòng đã đầy hoặc đã bắt đầu."));
+                return;
+            }
+
+            ctx.currentRoomId = roomId;
+
+            // KHÔNG chuyển scene ở đây.
+            // Khi đủ 2 người, server sẽ callback onGameStarted => ClientCallbackImpl sẽ showGame().
+            Platform.runLater(() -> showInfo("Đã vào phòng", "Đang chờ đủ 2 người để bắt đầu..."));
+
+        } catch (Exception e) {
+            Platform.runLater(() -> showInfo("Join thất bại", e.getMessage()));
+        } finally {
+            Platform.runLater(() -> lvRooms.setDisable(false));
+        }
+    });
 }
+
+
 
 
     @FXML
@@ -159,27 +177,35 @@ private void onJoinSelected() {
         }
     }
 
-    public void refreshRooms() {
-        if (lvRooms == null) return;
-        setRooms(ctx.rooms);
-    }
+  public void refreshRooms() {
+    if (lvRooms == null) return;
+
+    java.util.List<RoomInfo> open = ctx.rooms.stream()
+            .filter(r -> r != null)
+            .filter(r -> r.getStatus() == Enums.RoomStatus.WAITING)
+            .filter(r -> r.getCurrentPlayers() < r.getMaxPlayers())
+            .collect(java.util.stream.Collectors.toList());
+
+    lvRooms.getItems().setAll(open);
+}
+
 
     public void refreshOnline() {
         if (lbOnline != null) lbOnline.setText("Online: " + ctx.onlineUsers.size());
     }
 
-    public void setRooms(java.util.List<RoomInfo> rooms) {
-    if (lvRooms == null) return;
-    if (rooms == null) rooms = Collections.emptyList();
+//     public void setRooms(java.util.List<RoomInfo> rooms) {
+//     if (lvRooms == null) return;
+//     if (rooms == null) rooms = Collections.emptyList();
 
-    // Chỉ hiển thị phòng trống đúng nghĩa
-    java.util.List<RoomInfo> open = rooms.stream()
-            .filter(r -> r.getStatus() == Enums.RoomStatus.WAITING)
-            .filter(r -> r.getCurrentPlayers() < r.getMaxPlayers())
-            .collect(Collectors.toList());   // Java 11 OK
+//     // Chỉ hiển thị phòng trống đúng nghĩa
+//     java.util.List<RoomInfo> open = rooms.stream()
+//             .filter(r -> r.getStatus() == Enums.RoomStatus.WAITING)
+//             .filter(r -> r.getCurrentPlayers() < r.getMaxPlayers())
+//             .collect(Collectors.toList());   // Java 11 OK
 
-    lvRooms.getItems().setAll(open);        // setAll(Collection) OK
-}
+//     lvRooms.getItems().setAll(open);        // setAll(Collection) OK
+// }
 
 
     private void showInfo(String title, String message) {

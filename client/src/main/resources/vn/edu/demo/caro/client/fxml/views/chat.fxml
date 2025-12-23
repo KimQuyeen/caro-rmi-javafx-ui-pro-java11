@@ -5,10 +5,12 @@
 
 <VBox xmlns="http://javafx.com/javafx/17" xmlns:fx="http://javafx.com/fxml/1"
       fx:controller="vn.edu.demo.caro.client.controller.view.ChatViewController" spacing="14">
+
     <Label text="Chat toàn cục" styleClass="h1"/>
 
-    <VBox spacing="10" styleClass="card-pad">
-        <TextArea fx:id="ta" prefHeight="520" wrapText="true" VBox.vgrow="ALWAYS"/>
+    <VBox spacing="10" styleClass="card-pad" VBox.vgrow="ALWAYS">
+        <ListView fx:id="lvGlobalChat" prefHeight="520" VBox.vgrow="ALWAYS"/>
+
         <HBox spacing="10">
             <TextField fx:id="tf" promptText="Nhập tin nhắn..." onAction="#onSend" HBox.hgrow="ALWAYS"/>
             <Button text="Gửi" onAction="#onSend" styleClass="primary"/>

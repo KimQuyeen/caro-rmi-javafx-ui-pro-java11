@@ -17,6 +17,7 @@ import java.rmi.server.UnicastRemoteObject;
 import java.sql.SQLException;
 import java.time.Instant;
 import java.util.*;
+import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.ScheduledExecutorService;
 import java.util.concurrent.ThreadLocalRandom;
@@ -27,12 +28,17 @@ public class LobbyServiceImpl extends UnicastRemoteObject implements LobbyServic
 
     private final ServerState state;
 
+    private final ExecutorService callbackExecutor = Executors.newCachedThreadPool();
     // ===== Pending decisions (approval-based) =====
     private final Map<String, PendingDecision> pendingUndo = new HashMap<>();
     // "Redo" giờ là "đề nghị hòa" nhưng vẫn dùng pendingRedo để không phải đổi interface
     private final Map<String, PendingDecision> pendingRedo = new HashMap<>();
     private final Map<String, PendingDecision> pendingRematch = new HashMap<>();
 // private boolean waitingRematchDecision = false;
+
+// ===== Global chat history =====
+private static final int GLOBAL_CHAT_MAX = 200;
+private final Deque<ChatMessage> globalChatHistory = new ArrayDeque<>();
 
     // ===== Move history =====
     // NOTE: redoStack không còn dùng cho "Redo=Draw offer", nhưng giữ lại để không vỡ code cũ
@@ -370,17 +376,34 @@ private void resetRoomToWaiting(String roomId, Room room) throws RemoteException
     // ============================================================
     // Chat
     // ============================================================
-    @Override
-    public void sendGlobalChat(ChatMessage msg) throws RemoteException {
-        for (String u : sortedOnlineUsers()) safeCallback(u, cb -> cb.onGlobalChat(msg));
-    }
+@Override
+public void sendGlobalChat(ChatMessage msg) throws RemoteException {
+    final List<String> users;
+    synchronized (this) {
+        if (msg == null) return;
 
-    @Override
-    public void sendRoomChat(String roomId, ChatMessage msg) throws RemoteException {
+        globalChatHistory.addLast(msg);
+        while (globalChatHistory.size() > GLOBAL_CHAT_MAX) globalChatHistory.removeFirst();
+
+        users = sortedOnlineUsers();
+    }
+    for (String u : users) safeCallback(u, cb -> cb.onGlobalChat(msg));
+}
+
+
+   @Override
+public void sendRoomChat(String roomId, ChatMessage msg) throws RemoteException {
+    final List<String> targets;
+    synchronized (this) {
         Room room = state.rooms.get(roomId);
         if (room == null) throw new RemoteException("Room không tồn tại.");
-        for (String u : new ArrayList<>(room.players)) safeCallback(u, cb -> cb.onRoomChat(roomId, msg));
+        targets = new ArrayList<>(room.players);
     }
+    // callback ngoài synchronized(this)
+    for (String u : targets) {
+        safeCallback(u, cb -> cb.onRoomChat(roomId, msg));
+    }
+}
 
     // ============================================================
     // Gameplay
@@ -1029,17 +1052,24 @@ public synchronized void returnToLobby(String roomId, String from) throws Remote
         }
     }
 
-    private void safeCallback(String user, CallbackCall call) {
-    var s = state.online.get(user);
-    if (s == null || s.callback == null) return;
-    try {
-        call.run(s.callback);
-    } catch (Exception e) {
-        System.err.println("[Callback error] user=" + user);
-        e.printStackTrace();
-    }
-}
 
+
+//KHONG DUOC SUA HAM QUYET DINH CO BI DUNG TRONG ROOM GAME HAY KHONGGGGGGGGGG===============================================
+    private void safeCallback(String user, CallbackCall call) {
+        var s = state.online.get(user);
+        if (s == null || s.callback == null) return;
+
+        // FIX: Đưa việc gọi Client vào executor để chạy bất đồng bộ
+        // Server sẽ không chờ Client trả lời nữa -> Tránh Deadlock
+        callbackExecutor.submit(() -> {
+            try {
+                call.run(s.callback);
+            } catch (Exception e) {
+                System.err.println("[Callback error] user=" + user + " - " + e.getMessage());
+                // Tùy chọn: Nếu lỗi kết nối quá nhiều, có thể xem xét remove user khỏi online
+            }
+        });
+    }
 
     // ============================================================
     // Snapshot helpers

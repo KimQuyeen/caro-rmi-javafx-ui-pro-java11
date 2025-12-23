@@ -144,3 +144,44 @@
     -fx-underline: true;
     -fx-cursor: hand;
 }
+/* Bubble chung */
+.chat-bubble {
+    -fx-background-radius: 14;
+    -fx-border-radius: 14;
+    -fx-max-width: 460;
+}
+
+/* Tin nhắn của mình (bên phải) */
+.chat-me {
+    -fx-background-color: #2b79ff;
+}
+.chat-me .chat-text, .chat-me .chat-time {
+    -fx-text-fill: white;
+}
+
+/* Tin nhắn người khác (bên trái) */
+.chat-other {
+    -fx-background-color: #2f3440;
+}
+.chat-other .chat-from {
+    -fx-text-fill: #cbd5e1;
+}
+.chat-other .chat-text {
+    -fx-text-fill: white;
+}
+.chat-other .chat-time {
+    -fx-text-fill: #cbd5e1;
+    -fx-opacity: 0.85;
+}
+
+/* Meta */
+.chat-from {
+    -fx-font-size: 11px;
+    -fx-opacity: 0.95;
+}
+.chat-text {
+    -fx-font-size: 13px;
+}
+.chat-time {
+    -fx-font-size: 10px;
+}

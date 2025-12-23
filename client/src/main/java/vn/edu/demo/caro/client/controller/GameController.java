@@ -15,26 +15,20 @@ import javafx.util.Duration;
 import vn.edu.demo.caro.client.core.AppContext;
 import vn.edu.demo.caro.client.core.ClientCallbackImpl;
 import vn.edu.demo.caro.client.core.WithContext;
-import vn.edu.demo.caro.common.model.ChatMessage;
-import vn.edu.demo.caro.common.model.Enums;
 import vn.edu.demo.caro.common.model.Enums.GameEndReason;
 import vn.edu.demo.caro.common.model.Enums.Mark;
-import vn.edu.demo.caro.common.model.GameEnd;
-import vn.edu.demo.caro.common.model.GameSnapshot;
-import vn.edu.demo.caro.common.model.GameStart;
-import vn.edu.demo.caro.common.model.GameUpdate;
-import vn.edu.demo.caro.common.model.Move;
-import vn.edu.demo.caro.common.model.UserPublicProfile;
+import vn.edu.demo.caro.common.model.UserPublicProfile.FriendStatus;
+import vn.edu.demo.caro.common.model.*;
 
 import java.time.Instant;
-import java.util.Optional;
 
 public class GameController implements WithContext {
 
     private AppContext ctx;
     private ClientCallbackImpl callback;
-@FXML private Label lbMe;
-@FXML private Label lbOpponent;
+
+    @FXML private Label lbMe;
+    @FXML private Label lbOpponent;
 
     @FXML private Label lbTitle;
     @FXML private Label lbSub;
@@ -57,7 +51,6 @@ public class GameController implements WithContext {
 
     private int boardSize = 15;
 
-    private StackPane[][] cellPanes;
     private Button[][] cellButtons;
     private Label[][] cellMarks;
     private Mark[][] board;
@@ -69,198 +62,35 @@ public class GameController implements WithContext {
 
     private boolean aiEnabled = false;
 
-    // ===== Post-game / Rematch state =====
+    // ===== Post-game / Rematch =====
     private volatile boolean opponentRequestedRematch = false;
     private volatile boolean waitingRematchDecision = false;
 
-    private Alert endGameAlert;         // popup "Kết thúc ván"
-    private Stage rematchStage;         // popup rematch custom
+    private Alert endGameAlert;
+    private Stage rematchStage;
     private volatile boolean suppressPostGameChoice = false;
 
-    @FXML
-private void onOpponentClicked() {
-    if (aiEnabled) return;
+    // ---------------- FX helper ----------------
+    private void fx(Runnable r) {
+        if (r == null) return;
+        if (Platform.isFxApplicationThread()) r.run();
+        else Platform.runLater(r);
+    }
 
-    String target = (opponent == null) ? "" : opponent.trim();
-    if (target.isBlank() || "?".equals(target)) return;
-    if (ctx.username != null && ctx.username.equalsIgnoreCase(target)) return;
-    if ("AI".equalsIgnoreCase(target)) return;
+    // ---------------- RMI helper ----------------
+    @FunctionalInterface
+    private interface RemoteJob { void run() throws Exception; }
 
-    showOpponentProfilePopup(target);
-}
-
-
-private void showOpponentProfilePopup(String target) {
-    final Dialog<Void> dlg = new Dialog<>();
-    dlg.setTitle("Thông tin người chơi");
-    dlg.getDialogPane().getButtonTypes().add(ButtonType.CLOSE);
-
-    final Label lbName = new Label("Tên: " + target);
-    final Label lbPlayed = new Label("Số ván đã chơi: ...");
-    final Label lbWLD = new Label("Thắng/Thua/Hòa: ...");
-    final Label lbWinRate = new Label("Tỉ lệ thắng: ...");
-    final Label lbElo = new Label("Điểm: ...");
-    final Label lbRank = new Label("Thứ hạng: ...");
-    final Label lbFriend = new Label("Trạng thái bạn bè: ...");
-
-    // Nút gửi lời mời (khi NOT_FRIEND)
-    final Button btnAdd = new Button("Add friend");
-    btnAdd.setDisable(true);
-
-    // Nút chấp nhận / từ chối (khi INCOMING_PENDING)
-    final Button btnAccept = new Button("Chấp nhận");
-    final Button btnDecline = new Button("Từ chối");
-    btnAccept.setVisible(false);
-    btnDecline.setVisible(false);
-
-    final VBox box = new VBox(10,
-            lbName, lbPlayed, lbWLD, lbWinRate, lbElo, lbRank, lbFriend,
-            btnAdd, btnAccept, btnDecline
-    );
-    box.setStyle("-fx-padding: 16; -fx-min-width: 420;");
-    dlg.getDialogPane().setContent(box);
-
-    // Helper reset UI buttons theo trạng thái
-    Runnable resetButtons = () -> {
-        btnAdd.setVisible(true);
-        btnAdd.setDisable(true);
-        btnAdd.setText("Add friend");
-        btnAdd.setOnAction(null);
-
-        btnAccept.setVisible(false);
-        btnDecline.setVisible(false);
-        btnAccept.setDisable(false);
-        btnDecline.setDisable(false);
-        btnAccept.setOnAction(null);
-        btnDecline.setOnAction(null);
-    };
-
-    // Load dữ liệu từ server
-    new Thread(() -> {
-        try {
-            final String me = ctx.username; // đổi theo code bạn
-            final UserPublicProfile p = ctx.lobby.getUserPublicProfile(me, target);
-
-            Platform.runLater(() -> {
-                lbName.setText("Tên: " + p.getUsername());
-                lbPlayed.setText("Số ván đã chơi: " + p.getGamesPlayed());
-                lbWLD.setText("Thắng/Thua/Hòa: " + p.getWins() + "/" + p.getLosses() + "/" + p.getDraws());
-                lbWinRate.setText(String.format("Tỉ lệ thắng: %.1f%%", p.getWinRate()));
-                lbElo.setText("Điểm: " + p.getElo());
-                lbRank.setText("Thứ hạng: #" + p.getRank());
-
-                resetButtons.run();
-
-                UserPublicProfile.FriendStatus st = p.getFriendStatus();
-                switch (st) {
-                    case FRIEND:
-                        lbFriend.setText("Trạng thái bạn bè: Đã kết bạn");
-                        btnAdd.setVisible(false);
-                        break;
-
-                    case OUTGOING_PENDING:
-                        lbFriend.setText("Trạng thái bạn bè: Đã gửi lời mời (đang chờ)");
-                        btnAdd.setText("Đã gửi lời mời");
-                        btnAdd.setDisable(true);
-                        break;
-
-                    case INCOMING_PENDING:
-                        lbFriend.setText("Trạng thái bạn bè: Đối thủ đã gửi lời mời cho bạn");
-                        btnAdd.setVisible(false);
-
-                        btnAccept.setVisible(true);
-                        btnDecline.setVisible(true);
-
-                        // IMPORTANT: respondFriendRequest(from, to, accept)
-                        // from = người gửi lời mời = target
-                        // to   = người nhận = me
-                        btnAccept.setOnAction(ev -> {
-                            btnAccept.setDisable(true);
-                            btnDecline.setDisable(true);
-
-                            new Thread(() -> {
-                                try {
-                                    ctx.lobby.respondFriendRequest(target, me, true);
-
-                                    // Refresh lại profile để update UI ngay
-                                    UserPublicProfile p2 = ctx.lobby.getUserPublicProfile(me, target);
-                                    Platform.runLater(() -> {
-                                        lbFriend.setText("Trạng thái bạn bè: Đã kết bạn");
-                                        btnAccept.setVisible(false);
-                                        btnDecline.setVisible(false);
-                                        btnAdd.setVisible(false);
-                                    });
-                                } catch (Exception ex) {
-                                    Platform.runLater(() -> showInfo("Lỗi", ex.getMessage()));
-                                }
-                            }).start();
-                        });
-
-                        btnDecline.setOnAction(ev -> {
-                            btnAccept.setDisable(true);
-                            btnDecline.setDisable(true);
-
-                            new Thread(() -> {
-                                try {
-                                    ctx.lobby.respondFriendRequest(target, me, false);
-
-                                    // Sau khi từ chối, refresh lại profile
-                                    UserPublicProfile p2 = ctx.lobby.getUserPublicProfile(me, target);
-                                    Platform.runLater(() -> {
-                                        // thường sẽ về NOT_FRIEND (vì DENIED không còn PENDING)
-                                        lbFriend.setText("Trạng thái bạn bè: Chưa kết bạn");
-                                        btnAccept.setVisible(false);
-                                        btnDecline.setVisible(false);
-
-                                        btnAdd.setVisible(true);
-                                        btnAdd.setDisable(false);
-                                        btnAdd.setText("Add friend");
-                                        btnAdd.setOnAction(e2 -> sendFriendRequestFromPopup(target, btnAdd));
-                                    });
-                                } catch (Exception ex) {
-                                    Platform.runLater(() -> showInfo("Lỗi", ex.getMessage()));
-                                }
-                            }).start();
-                        });
-                        break;
-
-                    case NOT_FRIEND:
-                    default:
-                        lbFriend.setText("Trạng thái bạn bè: Chưa kết bạn");
-                        btnAdd.setDisable(false);
-                        btnAdd.setOnAction(e -> sendFriendRequestFromPopup(target, btnAdd));
-                        break;
-                }
-            });
-
-        } catch (Exception ex) {
-            Platform.runLater(() -> showInfo("Lỗi", ex.getMessage()));
-        }
-    }).start();
-
-    dlg.show();
-}
-
-
-private void sendFriendRequestFromPopup(String target, Button btnAdd) {
-    btnAdd.setDisable(true);
-    btnAdd.setText("Đang gửi...");
-
-    new Thread(() -> {
-        try {
-            String me = ctx.username; // đổi theo code bạn
-            ctx.lobby.sendFriendRequestByName(me, target); // đổi theo code bạn
-
-            Platform.runLater(() -> btnAdd.setText("Đã gửi lời mời"));
-        } catch (Exception ex) {
-            Platform.runLater(() -> {
-                btnAdd.setDisable(false);
-                btnAdd.setText("Add friend");
-                showInfo("Lỗi", ex.getMessage());
-            });
-        }
-    }).start();
-}
+    private void runRemote(String action, RemoteJob job) {
+        if (ctx == null || ctx.io() == null) return;
+        ctx.io().execute(() -> {
+            try {
+                job.run();
+            } catch (Exception e) {
+                fx(() -> showInfo("Lỗi", action + ": " + e.getMessage()));
+            }
+        });
+    }
 
     @Override
     public void init(AppContext ctx) {
@@ -297,11 +127,130 @@ private void sendFriendRequestFromPopup(String target, Button btnAdd) {
     }
 
     // ============================================================
-    // Server callback handlers (called via ClientCallbackImpl)
+    // Click opponent (optional)
+    // ============================================================
+    @FXML
+    private void onOpponentClicked() {
+        if (aiEnabled) return;
+        // Lấy tên đối thủ hiện tại
+        String target = (opponent == null) ? "" : opponent.trim();
+        
+        // Kiểm tra hợp lệ
+        if (target.isBlank() || "?".equals(target)) return;
+        if (ctx.username != null && ctx.username.equalsIgnoreCase(target)) return; // Không xem chính mình
+
+        // Gọi Server lấy thông tin (Chạy bất đồng bộ để không treo UI)
+        runRemote("Lấy thông tin đối thủ", () -> {
+            // Gọi hàm get profile bên server
+            UserPublicProfile profile = ctx.lobby.getUserPublicProfile(ctx.username, target);
+            
+            // Có dữ liệu thì vẽ lên UI
+            fx(() -> showUserProfileDialog(profile));
+        });
+    }
+
+    private void showUserProfileDialog(UserPublicProfile p) {
+        Dialog<Void> dialog = new Dialog<>();
+        dialog.setTitle("Thông tin người chơi");
+        dialog.setHeaderText("Hồ sơ: " + p.getUsername());
+
+        // Tạo nút Đóng
+        ButtonType closeBtn = new ButtonType("Đóng", ButtonBar.ButtonData.CANCEL_CLOSE);
+        dialog.getDialogPane().getButtonTypes().add(closeBtn);
+
+        // Layout dạng lưới để hiện thông số
+        GridPane grid = new GridPane();
+        grid.setHgap(10);
+        grid.setVgap(10);
+        grid.setStyle("-fx-padding: 20; -fx-font-size: 14px;");
+
+        // Hàng 1: Rank & Elo
+        grid.add(new Label("Xếp hạng:"), 0, 0);
+        Label lbRank = new Label("#" + p.getRank() + " (Elo: " + p.getElo() + ")");
+        lbRank.setStyle("-fx-font-weight: bold; -fx-text-fill: blue;");
+        grid.add(lbRank, 1, 0);
+
+        // Hàng 2: Số trận
+        grid.add(new Label("Tổng số trận:"), 0, 1);
+        grid.add(new Label(String.valueOf(p.getGamesPlayed())), 1, 1);
+
+        // Hàng 3: Thắng / Thua / Hòa
+        grid.add(new Label("Thắng/Thua/Hòa:"), 0, 2);
+        String stats = String.format("%d / %d / %d", p.getWins(), p.getLosses(), p.getDraws());
+        grid.add(new Label(stats), 1, 2);
+
+        // Hàng 4: Tỉ lệ thắng
+        grid.add(new Label("Tỉ lệ thắng:"), 0, 3);
+        Label lbRate = new Label(String.format("%.1f%%", p.getWinRate()));
+        if (p.getWinRate() >= 50) lbRate.setStyle("-fx-text-fill: green; -fx-font-weight: bold;");
+        grid.add(lbRate, 1, 3);
+
+        // Hàng 5: Nút kết bạn
+        Button btnAddFriend = new Button();
+        btnAddFriend.setMaxWidth(Double.MAX_VALUE);
+        GridPane.setColumnSpan(btnAddFriend, 2); // Nút dài ra 2 cột
+
+        // Kiểm tra trạng thái bạn bè để hiển thị nút
+        updateFriendButtonState(btnAddFriend, p.getFriendStatus(), p.getUsername());
+
+        grid.add(btnAddFriend, 0, 4);
+
+        dialog.getDialogPane().setContent(grid);
+        dialog.show();
+    }
+
+    // Hàm xử lý nút kết bạn
+    private void updateFriendButtonState(Button btn, FriendStatus status, String targetUser) {
+        switch (status) {
+            case FRIEND:
+                btn.setText("Đã là bạn bè");
+                btn.setDisable(true);
+                btn.setStyle("-fx-background-color: #4CAF50; -fx-text-fill: white;");
+                break;
+            case OUTGOING_PENDING:
+                btn.setText("Đã gửi lời mời (Chờ đồng ý)");
+                btn.setDisable(true);
+                break;
+            case INCOMING_PENDING:
+                btn.setText("Người này đã gửi lời mời cho bạn!");
+                btn.setDisable(true); // Hoặc bạn có thể code thêm nút chấp nhận tại đây
+                break;
+            case NOT_FRIEND:
+            default:
+                btn.setText("Gửi lời mời kết bạn");
+                btn.setDisable(false);
+                btn.setStyle(""); // Default style
+                
+                // Sự kiện khi bấm nút
+                btn.setOnAction(e -> {
+                    btn.setDisable(true);
+                    btn.setText("Đang gửi...");
+                    
+                    // Gọi Server gửi lời mời
+                    runRemote("Gửi kết bạn", () -> {
+                        boolean sent = ctx.lobby.sendFriendRequestByName(ctx.username, targetUser);
+                        fx(() -> {
+                            if (sent) {
+                                btn.setText("Đã gửi lời mời");
+                                showInfo("Thành công", "Đã gửi lời mời kết bạn tới " + targetUser);
+                            } else {
+                                btn.setText("Gửi lời mời kết bạn"); // Reset nếu lỗi
+                                btn.setDisable(false);
+                            }
+                        });
+                    });
+                });
+                break;
+        }
+    }
+
+    // ============================================================
+    // Server callback handlers (ClientCallbackImpl gọi vào đây)
     // ============================================================
 
     public void onUndoRequested(String roomId, String from) {
-        Platform.runLater(() -> {
+        // FIX: không dùng showAndWait (tránh “đứng” vì block FX)
+        fx(() -> {
             Alert a = new Alert(Alert.AlertType.CONFIRMATION);
             a.setTitle("Undo request");
             a.setHeaderText(from + " yêu cầu Undo");
@@ -311,18 +260,19 @@ private void sendFriendRequestFromPopup(String target, Button btnAdd) {
             ButtonType reject = new ButtonType("Reject", ButtonBar.ButtonData.NO);
             a.getButtonTypes().setAll(accept, reject);
 
-            ButtonType chosen = a.showAndWait().orElse(reject);
+            a.setOnHidden(ev -> {
+                ButtonType chosen = a.getResult();
+                boolean ok = (chosen == accept);
+                runRemote("respondUndo", () -> ctx.lobby.respondUndo(roomId, ctx.username, ok));
+            });
 
-            try {
-                ctx.lobby.respondUndo(roomId, ctx.username, chosen == accept);
-            } catch (Exception e) {
-                showInfo("Lỗi", e.getMessage());
-            }
+            a.show();
         });
     }
 
     public void onRedoRequested(String roomId, String from) {
-        Platform.runLater(() -> {
+        // FIX: không dùng showAndWait
+        fx(() -> {
             Alert a = new Alert(Alert.AlertType.CONFIRMATION);
             a.setTitle("Đề nghị hòa");
             a.setHeaderText(from + " đề nghị hòa");
@@ -332,13 +282,13 @@ private void sendFriendRequestFromPopup(String target, Button btnAdd) {
             ButtonType reject = new ButtonType("Reject", ButtonBar.ButtonData.NO);
             a.getButtonTypes().setAll(accept, reject);
 
-            ButtonType chosen = a.showAndWait().orElse(reject);
+            a.setOnHidden(ev -> {
+                ButtonType chosen = a.getResult();
+                boolean ok = (chosen == accept);
+                runRemote("respondRedo", () -> ctx.lobby.respondRedo(roomId, ctx.username, ok));
+            });
 
-            try {
-                ctx.lobby.respondRedo(roomId, ctx.username, chosen == accept);
-            } catch (Exception e) {
-                showInfo("Lỗi", e.getMessage());
-            }
+            a.show();
         });
     }
 
@@ -347,15 +297,11 @@ private void sendFriendRequestFromPopup(String target, Button btnAdd) {
     }
 
     public void onRematchRequested(String roomId, String from) {
-        Platform.runLater(() -> {
-            // mark: opponent asked rematch
+        fx(() -> {
             opponentRequestedRematch = true;
-
-            // close endgame popup if open
             suppressPostGameChoice = true;
             closeEndGameAlertIfAny();
 
-            // if I already requested, no need to show prompt
             if (waitingRematchDecision) {
                 appendChat(new ChatMessage("SYSTEM", "ROOM:" + roomId,
                         from + " cũng muốn Rematch. Đang chờ server bắt đầu ván mới...", Instant.now()));
@@ -367,51 +313,50 @@ private void sendFriendRequestFromPopup(String target, Button btnAdd) {
     }
 
     public void onGameStart(GameStart start) {
-    aiEnabled = false;
+        fx(() -> {
+            aiEnabled = false;
 
-    // reset post-game flags each new match
-    opponentRequestedRematch = false;
-    waitingRematchDecision = false;
-    suppressPostGameChoice = false;
+            opponentRequestedRematch = false;
+            waitingRematchDecision = false;
+            suppressPostGameChoice = false;
 
-    closeEndGameAlertIfAny();
-    closeRematchStageIfAny();
+            closeEndGameAlertIfAny();
+            closeRematchStageIfAny();
 
-    ctx.currentRoomId = start.getRoomId();
-    opponent = start.getOpponent();
-    myMark = start.getYourMark();
-    myTurn = start.isYourTurn();
-    finished = false;
+            ctx.currentRoomId = start.getRoomId();
+            opponent = start.getOpponent();
+            myMark = start.getYourMark();
+            myTurn = start.isYourTurn();
+            finished = false;
 
-    boardSize = start.getBoardSize();
-    setupBoard(boardSize);
+            boardSize = start.getBoardSize();
+            setupBoard(boardSize);
 
-    // ---- NEW: set header labels ----
-    if (lbMe != null) lbMe.setText("Bạn: " + ctx.username);
-    if (lbOpponent != null) lbOpponent.setText("Đối thủ: " + opponent);
+            if (lbMe != null) lbMe.setText("Bạn: " + ctx.username);
+            if (lbOpponent != null) lbOpponent.setText("Đối thủ: " + opponent);
 
-    appendChat(new ChatMessage(
-            "SYSTEM",
-            "ROOM:" + start.getRoomId(),
-            "Bắt đầu trận. Bạn là " + myMark +
-                    " | Bàn: " + start.getBoardSize() +
-                    " | " + (start.isBlockTwoEnds() ? "Chặn 2 đầu" : "Không chặn") +
-                    " | " + (start.isTimed() ? (start.getTimeLimitSeconds() + "s/lượt") : "Không giới hạn thời gian"),
-            Instant.now()
-    ));
+            appendChat(new ChatMessage(
+                    "SYSTEM",
+                    "ROOM:" + start.getRoomId(),
+                    "Bắt đầu trận. Bạn là " + myMark +
+                            " | Bàn: " + start.getBoardSize() +
+                            " | " + (start.isBlockTwoEnds() ? "Chặn 2 đầu" : "Không chặn") +
+                            " | " + (start.isTimed() ? (start.getTimeLimitSeconds() + "s/lượt") : "Không giới hạn thời gian"),
+                    Instant.now()
+            ));
 
-    if (btnUndo != null) btnUndo.setDisable(false);
-    if (btnRedo != null) btnRedo.setDisable(false);
+            if (btnUndo != null) btnUndo.setDisable(false);
+            if (btnRedo != null) btnRedo.setDisable(false);
 
-    setBoardEnabled(myTurn);
-    refreshHeader();
-}
-
+            setBoardEnabled(myTurn);
+            refreshHeader();
+        });
+    }
 
     public void onGameUpdate(GameUpdate update) {
         if (update == null || finished) return;
 
-        Platform.runLater(() -> {
+        fx(() -> {
             applyMoveIfPossible(update.getMove(), update.getMark());
             myTurn = ctx.username != null && ctx.username.equals(update.getNextTurnUser());
             setBoardEnabled(myTurn);
@@ -420,14 +365,13 @@ private void sendFriendRequestFromPopup(String target, Button btnAdd) {
     }
 
     public void onGameEnd(GameEnd end) {
+        if (end == null) return;
         if (finished) return;
         finished = true;
 
-        Platform.runLater(() -> {
+        fx(() -> {
             stopCountdown();
             setBoardEnabled(false);
-
-            // reset suppress each end
             suppressPostGameChoice = false;
 
             if (end.getReason() == GameEndReason.ABORT) {
@@ -441,78 +385,17 @@ private void sendFriendRequestFromPopup(String target, Button btnAdd) {
             appendChat(new ChatMessage("SYSTEM", "ROOM:" + end.getRoomId(), msg, Instant.now()));
             refreshHeader();
 
-            // Delay show popup to avoid IllegalStateException during layout/animation
-           PauseTransition pt = new PauseTransition(Duration.millis(150));
-pt.setOnFinished(ev -> Platform.runLater(() -> {
-    if (waitingRematchDecision || opponentRequestedRematch) return;
-    showPostGameChoicePopup(msg);
-}));
-pt.play();
-
+            PauseTransition pt = new PauseTransition(Duration.millis(150));
+            pt.setOnFinished(ev -> {
+                if (waitingRematchDecision || opponentRequestedRematch) return;
+                showPostGameChoicePopup(msg);
+            });
+            pt.play();
         });
     }
 
     public void onRoomChat(ChatMessage msg) {
         appendChat(msg);
-    }
-
-    public void applySnapshot(GameSnapshot snap) {
-        if (snap == null) return;
-
-        Platform.runLater(() -> {
-            if (board == null || cellButtons == null || cellMarks == null || snap.getBoardSize() != boardSize) {
-                boardSize = snap.getBoardSize();
-                setupBoard(boardSize);
-            }
-
-            Mark[][] b = snap.getBoard();
-            if (b == null) return;
-
-            for (int r = 0; r < boardSize; r++) {
-                for (int c = 0; c < boardSize; c++) {
-                    Mark m = b[r][c];
-                    board[r][c] = m;
-
-                    Label lb = cellMarks[r][c];
-                    Button btn = cellButtons[r][c];
-
-                    if (lb != null) {
-                        lb.setText(m == Mark.EMPTY ? "" : (m == Mark.X ? "X" : "O"));
-                        lb.getStyleClass().removeAll("mark-x", "mark-o");
-                        if (m == Mark.X) lb.getStyleClass().add("mark-x");
-                        if (m == Mark.O) lb.getStyleClass().add("mark-o");
-                    }
-
-                    if (btn != null) {
-                        boolean empty = (m == Mark.EMPTY);
-                        btn.setMouseTransparent(!empty);
-                        if (empty) {
-                            final int rr = r, cc = c;
-                            btn.setOnAction(e -> onCellClick(rr, cc));
-                        } else {
-                            btn.setOnAction(null);
-                        }
-                    }
-                }
-            }
-
-            String t = snap.getTurn();
-            if (t == null || t.isBlank()) {
-                myTurn = false;
-                finished = false; // WAITING state
-                setBoardEnabled(false);
-                if (lbTimer != null) lbTimer.setText("Waiting for opponent...");
-            } else {
-                myTurn = ctx.username != null && ctx.username.equals(t);
-                setBoardEnabled(!finished && myTurn);
-            }
-
-            timed = snap.isTimed();
-            turnDeadlineMillis = snap.getTurnDeadlineMillis();
-            startOrStopCountdown();
-
-            refreshHeader();
-        });
     }
 
     public void onUndoResult(String roomId, boolean accepted, String message) {
@@ -525,7 +408,79 @@ pt.play();
 
     public void onReturnToLobby(String roomId, String message) {
         appendChat(new ChatMessage("SYSTEM", "ROOM:" + roomId, message, Instant.now()));
-        Platform.runLater(this::onBackToMain);
+        fx(this::onBackToMain);
+    }
+
+    // ============================================================
+    // Snapshot (authoritative)
+    // ============================================================
+    public void applySnapshot(GameSnapshot snap) {
+        if (snap == null) return;
+
+        fx(() -> {
+            int snapSize = snap.getBoardSize();
+            if (snapSize <= 0) snapSize = 15;
+
+            boolean needRebuild = (board == null || cellButtons == null || cellMarks == null || snapSize != boardSize);
+            if (needRebuild) {
+                boardSize = snapSize;
+                setupBoard(boardSize);
+            }
+
+            Mark[][] b = snap.getBoard();
+            if (b != null) {
+                int size = Math.min(boardSize, b.length);
+                for (int r = 0; r < boardSize; r++) {
+                    for (int c = 0; c < boardSize; c++) {
+                        Mark m = Mark.EMPTY;
+                        if (r < size && b[r] != null && c < b[r].length && b[r][c] != null) {
+                            m = b[r][c];
+                        }
+                        board[r][c] = m;
+
+                        Label lb = cellMarks[r][c];
+                        Button btn = cellButtons[r][c];
+
+                        if (lb != null) {
+                            lb.setText(m == Mark.EMPTY ? "" : (m == Mark.X ? "X" : "O"));
+                            lb.getStyleClass().removeAll("mark-x", "mark-o");
+                            if (m == Mark.X) lb.getStyleClass().add("mark-x");
+                            if (m == Mark.O) lb.getStyleClass().add("mark-o");
+                        }
+                        if (btn != null) {
+                            boolean empty = (m == Mark.EMPTY);
+                            btn.setMouseTransparent(!empty);
+                            if (empty) {
+                                final int rr = r, cc = c;
+                                btn.setOnAction(e -> onCellClick(rr, cc));
+                            } else {
+                                btn.setOnAction(null);
+                            }
+                        }
+                    }
+                }
+            }
+
+            updateStateFromSnapshotOnly(snap);
+            refreshHeader();
+        });
+    }
+
+    private void updateStateFromSnapshotOnly(GameSnapshot snap) {
+        String t = snap.getTurn();
+        if (t == null || t.isBlank()) {
+            myTurn = false;
+            finished = false;
+            setBoardEnabled(false);
+            if (lbTimer != null) lbTimer.setText("Waiting for opponent...");
+        } else {
+            myTurn = (ctx.username != null && ctx.username.equals(t));
+            setBoardEnabled(!finished && myTurn);
+        }
+
+        timed = snap.isTimed();
+        turnDeadlineMillis = snap.getTurnDeadlineMillis();
+        startOrStopCountdown();
     }
 
     // ============================================================
@@ -536,49 +491,55 @@ pt.play();
     private void onSendChat() {
         String text = (tfChat != null && tfChat.getText() != null) ? tfChat.getText().trim() : "";
         if (text.isBlank()) return;
+        if (ctx.currentRoomId == null) return;
 
-        try {
-            if (ctx.currentRoomId == null) return;
-            ctx.lobby.sendRoomChat(ctx.currentRoomId,
-                    new ChatMessage(ctx.username, "ROOM:" + ctx.currentRoomId, text, Instant.now()));
-            if (tfChat != null) tfChat.clear();
-        } catch (Exception e) {
-            showInfo("Lỗi", e.getMessage());
-        }
+        final String roomId = ctx.currentRoomId;
+        final ChatMessage msg = new ChatMessage(ctx.username, "ROOM:" + roomId, text, Instant.now());
+
+        tfChat.clear();
+
+        runRemote("sendRoomChat", () -> ctx.lobby.sendRoomChat(roomId, msg));
+
+        fx(() -> { if (gridBoard != null) gridBoard.requestFocus(); });
     }
 
     @FXML
     private void onUndo() {
         if (aiEnabled || finished) return;
-        try { ctx.lobby.requestUndo(ctx.currentRoomId, ctx.username); }
-        catch (Exception e) { showInfo("Lỗi", e.getMessage()); }
+        final String roomId = ctx.currentRoomId;
+        final String user = ctx.username;
+        runRemote("requestUndo", () -> ctx.lobby.requestUndo(roomId, user));
     }
 
     @FXML
     private void onRedo() {
         if (aiEnabled || finished) return;
-        try { ctx.lobby.requestRedo(ctx.currentRoomId, ctx.username); }
-        catch (Exception e) { showInfo("Lỗi", e.getMessage()); }
+        final String roomId = ctx.currentRoomId;
+        final String user = ctx.username;
+        runRemote("requestRedo", () -> ctx.lobby.requestRedo(roomId, user));
     }
 
     @FXML
     private void onResign() {
         if (finished || aiEnabled) return;
-        try { ctx.lobby.resign(ctx.currentRoomId, ctx.username); }
-        catch (Exception e) { showInfo("Lỗi", e.getMessage()); }
+        final String roomId = ctx.currentRoomId;
+        final String user = ctx.username;
+        runRemote("resign", () -> ctx.lobby.resign(roomId, user));
     }
 
     @FXML
     private void onBackToMain() {
         stopCountdown();
-        try {
-            if (!aiEnabled && ctx.currentRoomId != null) {
-                ctx.lobby.leaveRoom(ctx.username, ctx.currentRoomId);
-            }
-        } catch (Exception ignored) {}
+
+        final String roomId = ctx.currentRoomId;
+        final String user = ctx.username;
 
         ctx.currentRoomId = null;
         ctx.sceneManager.showMain();
+
+        if (!aiEnabled && roomId != null) {
+            runRemote("leaveRoom", () -> ctx.lobby.leaveRoom(user, roomId));
+        }
     }
 
     // ============================================================
@@ -588,12 +549,8 @@ pt.play();
     private void setupBoard(int size) {
         if (gridBoard == null) return;
 
-        gridBoard.setManaged(true);
-        gridBoard.setVisible(true);
-
         boardSize = size;
         board = new Mark[size][size];
-        cellPanes = new StackPane[size][size];
         cellButtons = new Button[size][size];
         cellMarks = new Label[size][size];
 
@@ -620,8 +577,7 @@ pt.play();
                 btn.setMaxSize(cellSize, cellSize);
                 btn.getStyleClass().add("game-cell-btn");
 
-                final int rr = r;
-                final int cc = c;
+                final int rr = r, cc = c;
                 btn.setOnAction(e -> onCellClick(rr, cc));
 
                 Label markLb = new Label("");
@@ -631,7 +587,6 @@ pt.play();
                 markLb.getStyleClass().add("game-cell-label");
 
                 StackPane cell = new StackPane(btn, markLb);
-                cellPanes[r][c] = cell;
                 cellButtons[r][c] = btn;
                 cellMarks[r][c] = markLb;
 
@@ -651,11 +606,10 @@ pt.play();
         setBoardEnabled(false);
         refreshHeader();
 
-        try {
-            ctx.lobby.makeMove(ctx.currentRoomId, ctx.username, r, c);
-        } catch (Exception e) {
-            showInfo("Không hợp lệ", e.getMessage());
-        }
+        final String roomId = ctx.currentRoomId;
+        final String user = ctx.username;
+
+        runRemote("makeMove", () -> ctx.lobby.makeMove(roomId, user, r, c));
     }
 
     private void setBoardEnabled(boolean enabled) {
@@ -682,7 +636,6 @@ pt.play();
             if (mark == Mark.X) markLb.getStyleClass().add("mark-x");
             if (mark == Mark.O) markLb.getStyleClass().add("mark-o");
         }
-
         if (btn != null) {
             btn.setMouseTransparent(true);
             btn.setOnAction(null);
@@ -693,52 +646,44 @@ pt.play();
     // Post-game popups
     // ============================================================
 
-   private void showPostGameChoicePopup(String headerMsg) {
-    Alert a = new Alert(Alert.AlertType.CONFIRMATION);
-    endGameAlert = a;
+    private void showPostGameChoicePopup(String headerMsg) {
+        Alert a = new Alert(Alert.AlertType.CONFIRMATION);
+        endGameAlert = a;
 
-    a.setTitle("Kết thúc ván");
-    a.setHeaderText(headerMsg);
-    a.setContentText("Bạn muốn làm gì?");
+        a.setTitle("Kết thúc ván");
+        a.setHeaderText(headerMsg);
+        a.setContentText("Bạn muốn làm gì?");
 
-    ButtonType rematch = new ButtonType("Request rematch", ButtonBar.ButtonData.YES);
-    ButtonType lobby   = new ButtonType("Return to lobby", ButtonBar.ButtonData.NO);
-    ButtonType close   = new ButtonType("Đóng", ButtonBar.ButtonData.CANCEL_CLOSE);
+        ButtonType rematch = new ButtonType("Request rematch", ButtonBar.ButtonData.YES);
+        ButtonType lobby   = new ButtonType("Return to lobby", ButtonBar.ButtonData.NO);
+        ButtonType close   = new ButtonType("Đóng", ButtonBar.ButtonData.CANCEL_CLOSE);
+        a.getButtonTypes().setAll(rematch, lobby, close);
 
-    a.getButtonTypes().setAll(rematch, lobby, close);
+        a.setOnHidden(ev -> {
+            ButtonType chosen = a.getResult();
+            if (endGameAlert == a) endGameAlert = null;
 
-    // Non-blocking: xử lý kết quả sau khi dialog đóng
-    a.setResultConverter(bt -> bt);
+            if (suppressPostGameChoice) return;
+            if (chosen == null) return;
+            if (chosen.getButtonData() == ButtonBar.ButtonData.CANCEL_CLOSE) return;
 
-    a.setOnHidden(ev -> {
-        // dialog đã đóng => lấy kết quả
-        ButtonType chosen = a.getResult();
-        if (endGameAlert == a) endGameAlert = null;
-
-        if (suppressPostGameChoice) return;
-        if (chosen == null) return;
-        if (chosen.getButtonData() == ButtonBar.ButtonData.CANCEL_CLOSE) return;
-
-        try {
-            if (ctx.currentRoomId == null) return;
+            final String roomId = ctx.currentRoomId;
+            if (roomId == null) return;
 
             if (chosen == rematch) {
                 waitingRematchDecision = true;
-                ctx.lobby.submitPostGameChoice(ctx.currentRoomId, ctx.username, Enums.PostGameChoice.REMATCH);
-                appendChat(new ChatMessage("SYSTEM", "ROOM:" + ctx.currentRoomId,
+                runRemote("submitPostGameChoice",
+                        () -> ctx.lobby.submitPostGameChoice(roomId, ctx.username, Enums.PostGameChoice.REMATCH));
+                appendChat(new ChatMessage("SYSTEM", "ROOM:" + roomId,
                         "Đã gửi yêu cầu Rematch. Đang chờ đối thủ...", Instant.now()));
             } else if (chosen == lobby) {
-                ctx.lobby.submitPostGameChoice(ctx.currentRoomId, ctx.username, Enums.PostGameChoice.RETURN);
+                runRemote("submitPostGameChoice",
+                        () -> ctx.lobby.submitPostGameChoice(roomId, ctx.username, Enums.PostGameChoice.RETURN));
             }
-        } catch (Exception e) {
-            showInfo("Lỗi", e.getMessage());
-        }
-    });
+        });
 
-    // Quan trọng: show() (KHÔNG showAndWait)
-    a.show();
-}
-
+        a.show();
+    }
 
     private void showRematchPromptStage(String roomId, String from) {
         if (rematchStage != null && rematchStage.isShowing()) return;
@@ -752,39 +697,27 @@ pt.play();
 
         Label header = new Label(from + " muốn Rematch");
         header.setStyle("-fx-text-fill: black; -fx-font-size: 16px; -fx-font-weight: bold;");
-
         Label body = new Label("Bạn đồng ý rematch hay về lobby?");
         body.setStyle("-fx-text-fill: black; -fx-font-size: 13px;");
 
         Button btnYes = new Button("Accept Rematch");
         Button btnNo  = new Button("Return to lobby");
 
-        btnYes.setDefaultButton(true);
-        btnNo.setCancelButton(true);
-
         btnYes.setOnAction(e -> {
-            try {
-                waitingRematchDecision = true;
-                ctx.lobby.submitPostGameChoice(roomId, ctx.username, Enums.PostGameChoice.REMATCH);
-                appendChat(new ChatMessage("SYSTEM", "ROOM:" + roomId,
-                        "Bạn đã đồng ý Rematch. Đang chờ server bắt đầu ván mới...", Instant.now()));
-            } catch (Exception ex) {
-                showInfo("Lỗi", ex.getMessage());
-            } finally {
-                opponentRequestedRematch = false;
-                st.close();
-            }
+            waitingRematchDecision = true;
+            runRemote("submitPostGameChoice",
+                    () -> ctx.lobby.submitPostGameChoice(roomId, ctx.username, Enums.PostGameChoice.REMATCH));
+            appendChat(new ChatMessage("SYSTEM", "ROOM:" + roomId,
+                    "Bạn đã đồng ý Rematch. Đang chờ server bắt đầu ván mới...", Instant.now()));
+            opponentRequestedRematch = false;
+            st.close();
         });
 
         btnNo.setOnAction(e -> {
-            try {
-                ctx.lobby.submitPostGameChoice(roomId, ctx.username, Enums.PostGameChoice.RETURN);
-            } catch (Exception ex) {
-                showInfo("Lỗi", ex.getMessage());
-            } finally {
-                opponentRequestedRematch = false;
-                st.close();
-            }
+            runRemote("submitPostGameChoice",
+                    () -> ctx.lobby.submitPostGameChoice(roomId, ctx.username, Enums.PostGameChoice.RETURN));
+            opponentRequestedRematch = false;
+            st.close();
         });
 
         HBox buttons = new HBox(10, btnYes, btnNo);
@@ -794,11 +727,9 @@ pt.play();
         root.setStyle("-fx-padding: 16; -fx-background-color: white;");
 
         st.setScene(new Scene(root));
-        st.setOnHidden(e -> {
-            if (rematchStage == st) rematchStage = null;
-        });
+        st.setOnHidden(e -> { if (rematchStage == st) rematchStage = null; });
 
-        st.showAndWait();
+        st.show(); // non-blocking
     }
 
     private void closeEndGameAlertIfAny() {
@@ -845,14 +776,11 @@ pt.play();
     private void updateTimerLabel() {
         long now = System.currentTimeMillis();
         long remainSec = Math.max(0, (turnDeadlineMillis - now) / 1000);
-
-        if (lbTimer != null) {
-            lbTimer.setText((myTurn ? "Your turn" : "Opponent") + " • " + remainSec + "s");
-        }
+        if (lbTimer != null) lbTimer.setText((myTurn ? "Your turn" : "Opponent") + " • " + remainSec + "s");
     }
 
     // ============================================================
-    // Misc UI helpers
+    // Chat UI
     // ============================================================
 
     private void initChatUI() {
@@ -887,44 +815,40 @@ pt.play();
     }
 
     private void appendChat(ChatMessage msg) {
-        Platform.runLater(() -> {
+        fx(() -> {
             chatItems.add(msg);
             if (lvChat != null) lvChat.scrollTo(chatItems.size() - 1);
         });
     }
 
     private void refreshHeader() {
-    String mode = aiEnabled ? "OFFLINE vs AI" : "ONLINE PvP";
-    String room = (ctx.currentRoomId == null) ? "-" : ctx.currentRoomId;
+        String mode = aiEnabled ? "OFFLINE vs AI" : "ONLINE PvP";
+        String room = (ctx.currentRoomId == null) ? "-" : ctx.currentRoomId;
 
-    if (lbTitle != null) lbTitle.setText("Caro • " + mode);
+        if (lbTitle != null) lbTitle.setText("Caro • " + mode);
 
-    if (lbMe != null) lbMe.setText("Bạn: " + (ctx.username == null ? "?" : ctx.username));
-    if (lbOpponent != null) lbOpponent.setText("Đối thủ: " + (opponent == null ? "?" : opponent));
+        if (lbMe != null) lbMe.setText("Bạn: " + (ctx.username == null ? "?" : ctx.username));
+        if (lbOpponent != null) lbOpponent.setText("Đối thủ: " + (opponent == null ? "?" : opponent));
 
-    if (lbSub != null) {
-        lbSub.setText(
-                "Room=" + room +
-                        " | Opponent=" + opponent +
-                        " | You=" + myMark +
-                        " | Turn=" + (myTurn ? "You" : "Opponent") +
-                        " | Board=" + boardSize +
-                        (finished ? " | Finished" : "")
-        );
+        if (lbSub != null) {
+            lbSub.setText(
+                    "Room=" + room +
+                            " | Opponent=" + opponent +
+                            " | You=" + myMark +
+                            " | Turn=" + (myTurn ? "You" : "Opponent") +
+                            " | Board=" + boardSize +
+                            (finished ? " | Finished" : "")
+            );
+        }
     }
-}
-
 
     private void showInfo(String title, String message) {
-    Platform.runLater(() -> {
         Alert a = new Alert(Alert.AlertType.INFORMATION);
         a.setTitle(title);
         a.setHeaderText(title);
         a.setContentText(message);
-        a.show(); // không showAndWait
-    });
-}
-
+        a.show(); // non-blocking
+    }
 
     private String buildEndMessage(GameEnd end) {
         if (end.getReason() == GameEndReason.TIMEOUT) {

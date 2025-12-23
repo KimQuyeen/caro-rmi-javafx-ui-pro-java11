@@ -4,6 +4,7 @@ import javafx.fxml.FXML;
 import javafx.scene.control.*;
 import vn.edu.demo.caro.client.core.*;
 import vn.edu.demo.caro.common.rmi.LobbyService;
+import vn.edu.demo.caro.client.core.RmiConfig;
 
 import java.rmi.registry.LocateRegistry;
 
