@@ -24,6 +24,7 @@ import vn.edu.demo.caro.common.model.GameSnapshot;
 import vn.edu.demo.caro.common.model.GameStart;
 import vn.edu.demo.caro.common.model.GameUpdate;
 import vn.edu.demo.caro.common.model.Move;
+import vn.edu.demo.caro.common.model.UserPublicProfile;
 
 import java.time.Instant;
 import java.util.Optional;
@@ -32,6 +33,8 @@ public class GameController implements WithContext {
 
     private AppContext ctx;
     private ClientCallbackImpl callback;
+@FXML private Label lbMe;
+@FXML private Label lbOpponent;
 
     @FXML private Label lbTitle;
     @FXML private Label lbSub;
@@ -73,6 +76,191 @@ public class GameController implements WithContext {
     private Alert endGameAlert;         // popup "Kết thúc ván"
     private Stage rematchStage;         // popup rematch custom
     private volatile boolean suppressPostGameChoice = false;
+
+    @FXML
+private void onOpponentClicked() {
+    if (aiEnabled) return;
+
+    String target = (opponent == null) ? "" : opponent.trim();
+    if (target.isBlank() || "?".equals(target)) return;
+    if (ctx.username != null && ctx.username.equalsIgnoreCase(target)) return;
+    if ("AI".equalsIgnoreCase(target)) return;
+
+    showOpponentProfilePopup(target);
+}
+
+
+private void showOpponentProfilePopup(String target) {
+    final Dialog<Void> dlg = new Dialog<>();
+    dlg.setTitle("Thông tin người chơi");
+    dlg.getDialogPane().getButtonTypes().add(ButtonType.CLOSE);
+
+    final Label lbName = new Label("Tên: " + target);
+    final Label lbPlayed = new Label("Số ván đã chơi: ...");
+    final Label lbWLD = new Label("Thắng/Thua/Hòa: ...");
+    final Label lbWinRate = new Label("Tỉ lệ thắng: ...");
+    final Label lbElo = new Label("Điểm: ...");
+    final Label lbRank = new Label("Thứ hạng: ...");
+    final Label lbFriend = new Label("Trạng thái bạn bè: ...");
+
+    // Nút gửi lời mời (khi NOT_FRIEND)
+    final Button btnAdd = new Button("Add friend");
+    btnAdd.setDisable(true);
+
+    // Nút chấp nhận / từ chối (khi INCOMING_PENDING)
+    final Button btnAccept = new Button("Chấp nhận");
+    final Button btnDecline = new Button("Từ chối");
+    btnAccept.setVisible(false);
+    btnDecline.setVisible(false);
+
+    final VBox box = new VBox(10,
+            lbName, lbPlayed, lbWLD, lbWinRate, lbElo, lbRank, lbFriend,
+            btnAdd, btnAccept, btnDecline
+    );
+    box.setStyle("-fx-padding: 16; -fx-min-width: 420;");
+    dlg.getDialogPane().setContent(box);
+
+    // Helper reset UI buttons theo trạng thái
+    Runnable resetButtons = () -> {
+        btnAdd.setVisible(true);
+        btnAdd.setDisable(true);
+        btnAdd.setText("Add friend");
+        btnAdd.setOnAction(null);
+
+        btnAccept.setVisible(false);
+        btnDecline.setVisible(false);
+        btnAccept.setDisable(false);
+        btnDecline.setDisable(false);
+        btnAccept.setOnAction(null);
+        btnDecline.setOnAction(null);
+    };
+
+    // Load dữ liệu từ server
+    new Thread(() -> {
+        try {
+            final String me = ctx.username; // đổi theo code bạn
+            final UserPublicProfile p = ctx.lobby.getUserPublicProfile(me, target);
+
+            Platform.runLater(() -> {
+                lbName.setText("Tên: " + p.getUsername());
+                lbPlayed.setText("Số ván đã chơi: " + p.getGamesPlayed());
+                lbWLD.setText("Thắng/Thua/Hòa: " + p.getWins() + "/" + p.getLosses() + "/" + p.getDraws());
+                lbWinRate.setText(String.format("Tỉ lệ thắng: %.1f%%", p.getWinRate()));
+                lbElo.setText("Điểm: " + p.getElo());
+                lbRank.setText("Thứ hạng: #" + p.getRank());
+
+                resetButtons.run();
+
+                UserPublicProfile.FriendStatus st = p.getFriendStatus();
+                switch (st) {
+                    case FRIEND:
+                        lbFriend.setText("Trạng thái bạn bè: Đã kết bạn");
+                        btnAdd.setVisible(false);
+                        break;
+
+                    case OUTGOING_PENDING:
+                        lbFriend.setText("Trạng thái bạn bè: Đã gửi lời mời (đang chờ)");
+                        btnAdd.setText("Đã gửi lời mời");
+                        btnAdd.setDisable(true);
+                        break;
+
+                    case INCOMING_PENDING:
+                        lbFriend.setText("Trạng thái bạn bè: Đối thủ đã gửi lời mời cho bạn");
+                        btnAdd.setVisible(false);
+
+                        btnAccept.setVisible(true);
+                        btnDecline.setVisible(true);
+
+                        // IMPORTANT: respondFriendRequest(from, to, accept)
+                        // from = người gửi lời mời = target
+                        // to   = người nhận = me
+                        btnAccept.setOnAction(ev -> {
+                            btnAccept.setDisable(true);
+                            btnDecline.setDisable(true);
+
+                            new Thread(() -> {
+                                try {
+                                    ctx.lobby.respondFriendRequest(target, me, true);
+
+                                    // Refresh lại profile để update UI ngay
+                                    UserPublicProfile p2 = ctx.lobby.getUserPublicProfile(me, target);
+                                    Platform.runLater(() -> {
+                                        lbFriend.setText("Trạng thái bạn bè: Đã kết bạn");
+                                        btnAccept.setVisible(false);
+                                        btnDecline.setVisible(false);
+                                        btnAdd.setVisible(false);
+                                    });
+                                } catch (Exception ex) {
+                                    Platform.runLater(() -> showInfo("Lỗi", ex.getMessage()));
+                                }
+                            }).start();
+                        });
+
+                        btnDecline.setOnAction(ev -> {
+                            btnAccept.setDisable(true);
+                            btnDecline.setDisable(true);
+
+                            new Thread(() -> {
+                                try {
+                                    ctx.lobby.respondFriendRequest(target, me, false);
+
+                                    // Sau khi từ chối, refresh lại profile
+                                    UserPublicProfile p2 = ctx.lobby.getUserPublicProfile(me, target);
+                                    Platform.runLater(() -> {
+                                        // thường sẽ về NOT_FRIEND (vì DENIED không còn PENDING)
+                                        lbFriend.setText("Trạng thái bạn bè: Chưa kết bạn");
+                                        btnAccept.setVisible(false);
+                                        btnDecline.setVisible(false);
+
+                                        btnAdd.setVisible(true);
+                                        btnAdd.setDisable(false);
+                                        btnAdd.setText("Add friend");
+                                        btnAdd.setOnAction(e2 -> sendFriendRequestFromPopup(target, btnAdd));
+                                    });
+                                } catch (Exception ex) {
+                                    Platform.runLater(() -> showInfo("Lỗi", ex.getMessage()));
+                                }
+                            }).start();
+                        });
+                        break;
+
+                    case NOT_FRIEND:
+                    default:
+                        lbFriend.setText("Trạng thái bạn bè: Chưa kết bạn");
+                        btnAdd.setDisable(false);
+                        btnAdd.setOnAction(e -> sendFriendRequestFromPopup(target, btnAdd));
+                        break;
+                }
+            });
+
+        } catch (Exception ex) {
+            Platform.runLater(() -> showInfo("Lỗi", ex.getMessage()));
+        }
+    }).start();
+
+    dlg.show();
+}
+
+
+private void sendFriendRequestFromPopup(String target, Button btnAdd) {
+    btnAdd.setDisable(true);
+    btnAdd.setText("Đang gửi...");
+
+    new Thread(() -> {
+        try {
+            String me = ctx.username; // đổi theo code bạn
+            ctx.lobby.sendFriendRequestByName(me, target); // đổi theo code bạn
+
+            Platform.runLater(() -> btnAdd.setText("Đã gửi lời mời"));
+        } catch (Exception ex) {
+            Platform.runLater(() -> {
+                btnAdd.setDisable(false);
+                btnAdd.setText("Add friend");
+                showInfo("Lỗi", ex.getMessage());
+            });
+        }
+    }).start();
+}
 
     @Override
     public void init(AppContext ctx) {
@@ -179,41 +367,46 @@ public class GameController implements WithContext {
     }
 
     public void onGameStart(GameStart start) {
-        aiEnabled = false;
+    aiEnabled = false;
 
-        // reset post-game flags each new match
-        opponentRequestedRematch = false;
-        waitingRematchDecision = false;
-        suppressPostGameChoice = false;
+    // reset post-game flags each new match
+    opponentRequestedRematch = false;
+    waitingRematchDecision = false;
+    suppressPostGameChoice = false;
 
-        closeEndGameAlertIfAny();
-        closeRematchStageIfAny();
+    closeEndGameAlertIfAny();
+    closeRematchStageIfAny();
 
-        ctx.currentRoomId = start.getRoomId();
-        opponent = start.getOpponent();
-        myMark = start.getYourMark();
-        myTurn = start.isYourTurn();
-        finished = false;
+    ctx.currentRoomId = start.getRoomId();
+    opponent = start.getOpponent();
+    myMark = start.getYourMark();
+    myTurn = start.isYourTurn();
+    finished = false;
 
-        boardSize = start.getBoardSize();
-        setupBoard(boardSize);
+    boardSize = start.getBoardSize();
+    setupBoard(boardSize);
 
-        appendChat(new ChatMessage(
-                "SYSTEM",
-                "ROOM:" + start.getRoomId(),
-                "Bắt đầu trận. Bạn là " + myMark +
-                        " | Bàn: " + start.getBoardSize() +
-                        " | " + (start.isBlockTwoEnds() ? "Chặn 2 đầu" : "Không chặn") +
-                        " | " + (start.isTimed() ? (start.getTimeLimitSeconds() + "s/lượt") : "Không giới hạn thời gian"),
-                Instant.now()
-        ));
+    // ---- NEW: set header labels ----
+    if (lbMe != null) lbMe.setText("Bạn: " + ctx.username);
+    if (lbOpponent != null) lbOpponent.setText("Đối thủ: " + opponent);
 
-        if (btnUndo != null) btnUndo.setDisable(false);
-        if (btnRedo != null) btnRedo.setDisable(false);
+    appendChat(new ChatMessage(
+            "SYSTEM",
+            "ROOM:" + start.getRoomId(),
+            "Bắt đầu trận. Bạn là " + myMark +
+                    " | Bàn: " + start.getBoardSize() +
+                    " | " + (start.isBlockTwoEnds() ? "Chặn 2 đầu" : "Không chặn") +
+                    " | " + (start.isTimed() ? (start.getTimeLimitSeconds() + "s/lượt") : "Không giới hạn thời gian"),
+            Instant.now()
+    ));
 
-        setBoardEnabled(myTurn);
-        refreshHeader();
-    }
+    if (btnUndo != null) btnUndo.setDisable(false);
+    if (btnRedo != null) btnRedo.setDisable(false);
+
+    setBoardEnabled(myTurn);
+    refreshHeader();
+}
+
 
     public void onGameUpdate(GameUpdate update) {
         if (update == null || finished) return;
@@ -701,29 +894,37 @@ pt.play();
     }
 
     private void refreshHeader() {
-        String mode = aiEnabled ? "OFFLINE vs AI" : "ONLINE PvP";
-        String room = (ctx.currentRoomId == null) ? "-" : ctx.currentRoomId;
+    String mode = aiEnabled ? "OFFLINE vs AI" : "ONLINE PvP";
+    String room = (ctx.currentRoomId == null) ? "-" : ctx.currentRoomId;
 
-        if (lbTitle != null) lbTitle.setText("Caro • " + mode);
-        if (lbSub != null) {
-            lbSub.setText(
-                    "Room=" + room +
-                            " | Opponent=" + opponent +
-                            " | You=" + myMark +
-                            " | Turn=" + (myTurn ? "You" : "Opponent") +
-                            " | Board=" + boardSize +
-                            (finished ? " | Finished" : "")
-            );
-        }
+    if (lbTitle != null) lbTitle.setText("Caro • " + mode);
+
+    if (lbMe != null) lbMe.setText("Bạn: " + (ctx.username == null ? "?" : ctx.username));
+    if (lbOpponent != null) lbOpponent.setText("Đối thủ: " + (opponent == null ? "?" : opponent));
+
+    if (lbSub != null) {
+        lbSub.setText(
+                "Room=" + room +
+                        " | Opponent=" + opponent +
+                        " | You=" + myMark +
+                        " | Turn=" + (myTurn ? "You" : "Opponent") +
+                        " | Board=" + boardSize +
+                        (finished ? " | Finished" : "")
+        );
     }
+}
+
 
     private void showInfo(String title, String message) {
+    Platform.runLater(() -> {
         Alert a = new Alert(Alert.AlertType.INFORMATION);
         a.setTitle(title);
         a.setHeaderText(title);
         a.setContentText(message);
-        a.showAndWait();
-    }
+        a.show(); // không showAndWait
+    });
+}
+
 
     private String buildEndMessage(GameEnd end) {
         if (end.getReason() == GameEndReason.TIMEOUT) {

@@ -18,11 +18,23 @@
 
             <Separator orientation="VERTICAL"/>
             <VBox spacing="2">
-                <Label fx:id="lbTitle" text="Caro" styleClass="h2"/>
-                <Label fx:id="lbSub" text="Status" styleClass="muted"/>
-                <Label fx:id="lbTimer" text="" styleClass="muted"/>
+    <Label fx:id="lbTitle" text="Caro" styleClass="h2"/>
+    <Label fx:id="lbSub" text="Status" styleClass="muted"/>
+    <Label fx:id="lbTimer" text="" styleClass="muted"/>
+</VBox>
 
-            </VBox>
+<Separator orientation="VERTICAL"/>
+
+<VBox spacing="2">
+    <Label text="Trận đấu" styleClass="muted"/>
+    <Label fx:id="lbMe" text="Bạn: ..." />
+    <Label fx:id="lbOpponent"
+           text="Đối thủ: ..."
+           onMouseClicked="#onOpponentClicked"
+           styleClass="clickable-label"/>
+</VBox>
+
+<Region HBox.hgrow="ALWAYS"/>
 
             <Region HBox.hgrow="ALWAYS"/>
         </HBox>

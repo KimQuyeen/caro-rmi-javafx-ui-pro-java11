@@ -10,12 +10,14 @@ vn/edu/demo/caro/common/model/UserProfile.class
 vn/edu/demo/caro/common/util/GameRules.class
 vn/edu/demo/caro/common/model/ChatMessage.class
 vn/edu/demo/caro/common/model/GameUpdate.class
+vn/edu/demo/caro/common/model/UserPublicProfile.class
 vn/edu/demo/caro/common/model/GameEnd.class
 vn/edu/demo/caro/common/model/Enums$GameEndReason.class
 vn/edu/demo/caro/common/ai/MinimaxAI$AiMove.class
 vn/edu/demo/caro/common/model/Enums$PostGameChoice.class
 vn/edu/demo/caro/common/model/Enums$RoomStatus.class
 vn/edu/demo/caro/common/model/RoomInfo.class
+vn/edu/demo/caro/common/model/UserPublicProfile$FriendStatus.class
 vn/edu/demo/caro/common/rmi/ClientCallback.class
 vn/edu/demo/caro/common/model/Enums$Mark.class
 vn/edu/demo/caro/common/ai/MinimaxAI.class

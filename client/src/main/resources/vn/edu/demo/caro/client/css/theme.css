@@ -140,3 +140,7 @@
     -fx-text-fill: #40a9ff;
     -fx-effect: dropshadow(three-pass-box, rgba(64, 169, 255, 0.6), 10, 0, 0, 0);
 }
+.clickable-label {
+    -fx-underline: true;
+    -fx-cursor: hand;
+}

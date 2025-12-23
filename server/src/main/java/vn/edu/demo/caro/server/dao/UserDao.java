@@ -70,7 +70,6 @@ public void create(String username, String password) throws SQLException {
 }
 
 
-
     public void updateStats(String username, int wins, int losses, int draws, int elo) throws SQLException {
         try (Connection c = Db.getConnection();
              PreparedStatement ps = c.prepareStatement(
@@ -135,4 +134,22 @@ public void create(String username, String password) throws SQLException {
             this.banReason = banReason;
         }
     }
+
+    public UserRecord findByUsername(String username) throws SQLException {
+    return find(username).orElse(null);
+}
+
+public int countUsersHigherElo(int elo) throws SQLException {
+    String sql = "SELECT COUNT(*) AS c FROM users WHERE elo > ?";
+    try (Connection c = Db.getConnection();
+         PreparedStatement ps = c.prepareStatement(sql)) {
+        ps.setInt(1, elo);
+        try (ResultSet rs = ps.executeQuery()) {
+            if (!rs.next()) return 0;
+            return rs.getInt("c");
+        }
+    }
+}
+
+
 }

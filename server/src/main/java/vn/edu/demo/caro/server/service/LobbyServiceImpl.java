@@ -7,8 +7,10 @@ import vn.edu.demo.caro.common.model.Enums.PostGameChoice;
 import vn.edu.demo.caro.common.model.Enums.RoomStatus;
 import vn.edu.demo.caro.common.rmi.ClientCallback;
 import vn.edu.demo.caro.common.rmi.LobbyService;
+import vn.edu.demo.caro.server.dao.UserDao;
 import vn.edu.demo.caro.server.state.Room;
 import vn.edu.demo.caro.server.state.ServerState;
+import vn.edu.demo.caro.common.model.UserPublicProfile.FriendStatus;
 
 import java.rmi.RemoteException;
 import java.rmi.server.UnicastRemoteObject;
@@ -1028,13 +1030,16 @@ public synchronized void returnToLobby(String roomId, String from) throws Remote
     }
 
     private void safeCallback(String user, CallbackCall call) {
-        var s = state.online.get(user);
-        if (s == null || s.callback == null) return;
-        try {
-            call.run(s.callback);
-        } catch (Exception ignored) {
-        }
+    var s = state.online.get(user);
+    if (s == null || s.callback == null) return;
+    try {
+        call.run(s.callback);
+    } catch (Exception e) {
+        System.err.println("[Callback error] user=" + user);
+        e.printStackTrace();
     }
+}
+
 
     // ============================================================
     // Snapshot helpers
@@ -1178,5 +1183,95 @@ public synchronized void returnToLobby(String roomId, String from) throws Remote
         }
     }
 
+@Override
+public synchronized UserPublicProfile getUserPublicProfile(String requester, String target) throws RemoteException {
+    if (requester == null || requester.isBlank()) throw new RemoteException("Requester invalid");
+    if (target == null || target.isBlank()) throw new RemoteException("Target invalid");
+
+    try {
+        requester = requester.trim();
+        target = target.trim();
+
+        UserDao.UserRecord u = state.userDao.findByUsername(target);
+        if (u == null) throw new RemoteException("User không tồn tại: " + target);
+
+        int wins = u.wins, losses = u.losses, draws = u.draws, elo = u.elo;
+        int games = wins + losses + draws;
+        double wr = (games == 0) ? 0.0 : (wins * 100.0 / games);
+
+        UserPublicProfile p = new UserPublicProfile();
+        p.setUsername(u.username);
+        p.setWins(wins);
+        p.setLosses(losses);
+        p.setDraws(draws);
+        p.setElo(elo);
+        p.setGamesPlayed(games);
+        p.setWinRate(wr);
+
+        p.setRank(computeRankByElo(elo, u.username));
+        p.setFriendStatus(computeFriendStatus(requester, target));
+
+        return p;
+
+    } catch (RemoteException e) {
+        throw e;
+    } catch (Exception e) {
+        throw new RemoteException("getUserPublicProfile failed: " + e.getMessage(), e);
+    }
+}
+
+
+@Override
+public synchronized boolean sendFriendRequestByName(String from, String to) throws RemoteException {
+    if (from == null || from.isBlank()) throw new RemoteException("From invalid");
+    if (to == null || to.isBlank()) throw new RemoteException("To invalid");
+
+    from = from.trim();
+    to = to.trim();
+
+    if (from.equalsIgnoreCase(to)) throw new RemoteException("Không thể tự kết bạn với chính mình.");
+
+    // ✅ tạo biến final để dùng trong lambda
+    final String fromUser = from;
+    final String toUser = to;
+
+    try {
+        if (!state.userDao.exists(toUser)) throw new RemoteException("User không tồn tại: " + toUser);
+
+        if (state.friendDao.areFriends(fromUser, toUser)) {
+            throw new RemoteException("Hai bạn đã là bạn bè.");
+        }
+        if (state.friendDao.hasPendingRequest(fromUser, toUser)) {
+            throw new RemoteException("Bạn đã gửi lời mời trước đó.");
+        }
+        if (state.friendDao.hasPendingRequest(toUser, fromUser)) {
+            throw new RemoteException("Đối thủ đã gửi lời mời cho bạn. Vui lòng vào mục Lời mời để chấp nhận.");
+        }
+
+        state.friendDao.createFriendRequest(fromUser, toUser);
+
+        // ✅ dùng biến final trong lambda
+        safeCallback(toUser, cb -> cb.onFriendRequest(new FriendRequest(fromUser, toUser, Instant.now())));
+
+        return true;
+
+    } catch (RemoteException e) {
+        throw e;
+    } catch (Exception e) {
+        throw new RemoteException("sendFriendRequest failed: " + e.getMessage(), e);
+    }
+}
+
+private int computeRankByElo(int elo, String username) throws SQLException {
+    int higher = state.userDao.countUsersHigherElo(elo);
+    return higher + 1;
+}
+
+private FriendStatus computeFriendStatus(String requester, String target) throws SQLException {
+    if (state.friendDao.areFriends(requester, target)) return FriendStatus.FRIEND;
+    if (state.friendDao.hasPendingRequest(requester, target)) return FriendStatus.OUTGOING_PENDING;
+    if (state.friendDao.hasPendingRequest(target, requester)) return FriendStatus.INCOMING_PENDING;
+    return FriendStatus.NOT_FRIEND;
+}
 
 }

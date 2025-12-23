@@ -1,5 +1,6 @@
 vn/edu/demo/caro/client/controller/MainController.class
 vn/edu/demo/caro/client/core/WithContext.class
+vn/edu/demo/caro/client/controller/GameController$2.class
 vn/edu/demo/caro/client/controller/view/LeaderboardViewController.class
 vn/edu/demo/caro/client/core/RmiConfig.class
 vn/edu/demo/caro/client/controller/view/RoomsViewController.class

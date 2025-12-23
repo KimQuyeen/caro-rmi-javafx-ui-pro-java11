@@ -1,14 +1,20 @@
 package vn.edu.demo.caro.common.rmi;
 
 import vn.edu.demo.caro.common.model.*;
-import vn.edu.demo.caro.common.model.Enums;
 
 import java.rmi.Remote;
 import java.rmi.RemoteException;
 import java.util.List;
 
+
 public interface LobbyService extends Remote {
 
+    UserPublicProfile getUserPublicProfile(String requester, String target) throws RemoteException;
+
+    boolean sendFriendRequestByName(String from, String to) throws RemoteException;
+
+
+    
     // Auth
     UserProfile register(String username, String password) throws RemoteException;
     UserProfile login(String username, String password, ClientCallback callback) throws RemoteException;

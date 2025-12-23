@@ -10,6 +10,7 @@
 /Users/kimquyen/Downloads/caro-rmi-javafx-ui-pro-java11/common/src/main/java/vn/edu/demo/caro/common/model/RoomCreateRequest.java
 /Users/kimquyen/Downloads/caro-rmi-javafx-ui-pro-java11/common/src/main/java/vn/edu/demo/caro/common/model/RoomInfo.java
 /Users/kimquyen/Downloads/caro-rmi-javafx-ui-pro-java11/common/src/main/java/vn/edu/demo/caro/common/model/UserProfile.java
+/Users/kimquyen/Downloads/caro-rmi-javafx-ui-pro-java11/common/src/main/java/vn/edu/demo/caro/common/model/UserPublicProfile.java
 /Users/kimquyen/Downloads/caro-rmi-javafx-ui-pro-java11/common/src/main/java/vn/edu/demo/caro/common/rmi/AdminService.java
 /Users/kimquyen/Downloads/caro-rmi-javafx-ui-pro-java11/common/src/main/java/vn/edu/demo/caro/common/rmi/ClientCallback.java
 /Users/kimquyen/Downloads/caro-rmi-javafx-ui-pro-java11/common/src/main/java/vn/edu/demo/caro/common/rmi/LobbyService.java
