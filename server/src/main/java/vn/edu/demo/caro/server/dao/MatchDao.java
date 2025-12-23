@@ -1,14 +1,21 @@
 package vn.edu.demo.caro.server.dao;
 
 import vn.edu.demo.caro.server.db.Db;
-
 import java.sql.Connection;
 import java.sql.PreparedStatement;
 import java.sql.SQLException;
 
 public class MatchDao {
+    private final Db db;
+
+    // Constructor nhận Db
+    public MatchDao(Db db) {
+        this.db = db;
+    }
+
     public void insertMatch(String roomId, String playerX, String playerO, String winner, String reason) throws SQLException {
-        try (Connection c = Db.getConnection();
+        // Dùng db.connect() thay vì Db.getConnection()
+        try (Connection c = db.connect();
              PreparedStatement ps = c.prepareStatement(
                      "INSERT INTO matches(room_id, player_x, player_o, winner, reason) VALUES(?,?,?,?,?)")) {
             ps.setString(1, roomId);

@@ -1,0 +1,27 @@
+.root { -fx-background-color: #1e1e1e; -fx-font-family: "Consolas", "Segoe UI", sans-serif; }
+
+.header { -fx-background-color: #252526; -fx-border-color: #333; -fx-border-width: 0 0 1 0; }
+.h1 { -fx-text-fill: #007acc; -fx-font-weight: bold; -fx-font-size: 18px; }
+.h2 { -fx-text-fill: #cccccc; -fx-font-weight: bold; -fx-font-size: 14px; }
+.status-text { -fx-text-fill: white; -fx-font-weight: bold; }
+.muted { -fx-text-fill: #808080; }
+
+.btn-start { -fx-background-color: #2ecc71; -fx-text-fill: white; -fx-font-weight: bold; -fx-cursor: hand; }
+.btn-stop { -fx-background-color: #e74c3c; -fx-text-fill: white; -fx-font-weight: bold; -fx-cursor: hand; }
+
+.console {
+    -fx-control-inner-background: #1e1e1e;
+    -fx-text-fill: #4ec9b0; /* Màu xanh code */
+    -fx-font-family: "Consolas", monospace;
+    -fx-highlight-fill: #264f78;
+    -fx-highlight-text-fill: white;
+}
+.console .content { -fx-background-color: #1e1e1e; }
+
+.user-list {
+    -fx-control-inner-background: #252526;
+    -fx-background-color: #252526;
+    -fx-text-fill: #dcdcdc;
+}
+.user-list .list-cell:filled:selected { -fx-background-color: #37373d; }
+.user-list .list-cell { -fx-text-fill: #dcdcdc; }

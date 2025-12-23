@@ -1,6 +1,9 @@
 package vn.edu.demo.caro.client.core;
 
 import javafx.application.Platform;
+import javafx.scene.control.Alert;
+import javafx.scene.control.ButtonBar;
+import javafx.scene.control.ButtonType;
 import vn.edu.demo.caro.client.controller.GameController;
 import vn.edu.demo.caro.client.controller.MainController;
 import vn.edu.demo.caro.client.controller.view.ChatViewController;
@@ -9,15 +12,14 @@ import vn.edu.demo.caro.client.controller.view.LeaderboardViewController;
 import vn.edu.demo.caro.client.controller.view.RoomsViewController;
 import vn.edu.demo.caro.common.model.*;
 import vn.edu.demo.caro.common.rmi.ClientCallback;
-import vn.edu.demo.caro.common.model.FriendInfo;
-import vn.edu.demo.caro.common.model.FriendRequest;
+
 import java.rmi.RemoteException;
 import java.rmi.server.UnicastRemoteObject;
 import java.util.List;
 import java.util.concurrent.ConcurrentLinkedQueue;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicReference;
-
+import java.util.Optional;
 /**
  * RMI callback: Server -> Client
  * UI updates must run on JavaFX Application Thread.
@@ -27,6 +29,7 @@ import java.util.concurrent.atomic.AtomicReference;
 public class ClientCallbackImpl extends UnicastRemoteObject implements ClientCallback {
 
     private final AppContext ctx;
+    
 
     private volatile MainController mainController;
     private volatile RoomsViewController roomsController;
@@ -64,6 +67,46 @@ public class ClientCallbackImpl extends UnicastRemoteObject implements ClientCal
                 fx(() -> { /* noop */ });
             }
         }
+    }
+
+    @Override
+    public void onAnnouncement(String text) throws RemoteException {
+        fx(() -> {
+            // Hiện Popup thông báo thay vì chỉ log log status
+            Alert alert = new Alert(Alert.AlertType.INFORMATION);
+            alert.setTitle("Thông báo từ Server");
+            alert.setHeaderText("📢 THÔNG BÁO");
+            alert.setContentText(text);
+            alert.show(); // Dùng show() để không chặn luồng UI
+            
+            // Log phụ
+            if (mainController != null) mainController.pushStatus("Thông báo: " + text);
+        });
+    }
+
+    @Override
+    public void onWarning(String text) throws RemoteException {
+        fx(() -> {
+            Alert alert = new Alert(Alert.AlertType.WARNING);
+            alert.setTitle("Cảnh báo");
+            alert.setHeaderText("⚠️ CẢNH BÁO VI PHẠM");
+            alert.setContentText(text);
+            alert.show();
+        });
+    }
+
+    @Override
+    public void onBanned(String reason) throws RemoteException {
+        fx(() -> {
+            Alert alert = new Alert(Alert.AlertType.ERROR);
+            alert.setTitle("Tài khoản bị khóa");
+            alert.setHeaderText("⛔ BẠN ĐÃ BỊ BAN");
+            alert.setContentText(reason + "\nGame sẽ tự động thoát.");
+            
+            // Chờ người dùng bấm OK hoặc tắt popup thì thoát game
+            alert.showAndWait(); 
+            System.exit(0);
+        });
     }
 
     // ===== Coalesce game update/snapshot (optional, but good) =====
@@ -187,23 +230,23 @@ public class ClientCallbackImpl extends UnicastRemoteObject implements ClientCal
         fx(() -> ctx.getGlobalChatStore().add(msg));
     }
 
-    @Override
-    public void onAnnouncement(String text) throws RemoteException {
-        fx(() -> {
-            if (mainController != null) mainController.pushStatus("Thông báo: " + text);
-            if (gameController != null) gameController.onAnnouncement(text);
-        });
-    }
+    // @Override
+    // public void onAnnouncement(String text) throws RemoteException {
+    //     fx(() -> {
+    //         if (mainController != null) mainController.pushStatus("Thông báo: " + text);
+    //         if (gameController != null) gameController.onAnnouncement(text);
+    //     });
+    // }
 
-    @Override
-    public void onWarning(String text) throws RemoteException {
-        fx(() -> { if (mainController != null) mainController.pushStatus("Cảnh báo: " + text); });
-    }
+    // @Override
+    // public void onWarning(String text) throws RemoteException {
+    //     fx(() -> { if (mainController != null) mainController.pushStatus("Cảnh báo: " + text); });
+    // }
 
-    @Override
-    public void onBanned(String reason) throws RemoteException {
-        fx(() -> { if (mainController != null) mainController.pushStatus("Bị ban: " + reason); });
-    }
+    // @Override
+    // public void onBanned(String reason) throws RemoteException {
+    //     fx(() -> { if (mainController != null) mainController.pushStatus("Bị ban: " + reason); });
+    // }
 
     @Override
     public void onRoomListUpdated(List<RoomInfo> rooms) throws RemoteException {
@@ -246,14 +289,31 @@ public class ClientCallbackImpl extends UnicastRemoteObject implements ClientCal
         });
     }
 
-     @Override
+   @Override
     public void onFriendRequest(FriendRequest req) throws RemoteException {
-        // Cập nhật danh sách bên view bạn bè (nếu đang mở)
         fx(() -> { 
+            // Cập nhật view
             if (friendsController != null) friendsController.handleFriendRequest(req); 
             
-            // THÊM ĐOẠN NÀY: Hiện Popup thông báo ngay lập tức
-            showFriendRequestDialog(req);
+            // Hiện Popup hỏi
+            Alert alert = new Alert(Alert.AlertType.CONFIRMATION);
+            alert.setTitle("Lời mời kết bạn");
+            alert.setHeaderText("Kết bạn mới");
+            alert.setContentText(req.getFrom() + " muốn kết bạn với bạn.");
+
+            ButtonType btnAccept = new ButtonType("Đồng ý", ButtonBar.ButtonData.YES);
+            ButtonType btnDecline = new ButtonType("Từ chối", ButtonBar.ButtonData.NO);
+            
+            alert.getButtonTypes().setAll(btnAccept, btnDecline);
+
+            alert.showAndWait().ifPresent(type -> {
+                boolean accept = (type == btnAccept);
+                ctx.io().execute(() -> {
+                    try {
+                        ctx.lobby.respondFriendRequest(req.getFrom(), ctx.username, accept);
+                    } catch (Exception e) { e.printStackTrace(); }
+                });
+            });
         });
     }
 

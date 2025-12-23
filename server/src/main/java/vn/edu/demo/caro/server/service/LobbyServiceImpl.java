@@ -122,28 +122,34 @@ private final Deque<ChatMessage> globalChatHistory = new ArrayDeque<>();
     @Override
     public synchronized UserProfile register(String username, String password) throws RemoteException {
         try {
+            // 1. Validate dữ liệu đầu vào
             if (username == null || username.trim().isEmpty())
-                throw new RemoteException("Username trống");
+                throw new RemoteException("Tên đăng nhập không được để trống.");
             if (password == null || password.trim().isEmpty())
-                throw new RemoteException("Password trống");
+                throw new RemoteException("Mật khẩu không được để trống.");
+            if (username.length() < 3)
+                throw new RemoteException("Tên đăng nhập phải từ 3 ký tự trở lên.");
 
             username = username.trim();
 
+            // 2. Kiểm tra trùng lặp
             if (state.userDao.exists(username)) {
-                throw new RemoteException("Username đã tồn tại");
+                throw new RemoteException("Tên tài khoản đã tồn tại. Vui lòng chọn tên khác.");
             }
 
+            // 3. Tạo tài khoản trong DB
             state.userDao.create(username, password);
 
+            // 4. Trả về thông tin (nhưng KHÔNG add vào state.online)
             var rec = state.userDao.find(username)
-                    .orElseThrow(() -> new RemoteException("Không đọc được user vừa tạo"));
+                    .orElseThrow(() -> new RemoteException("Lỗi hệ thống: Không tìm thấy user vừa tạo."));
 
             return new UserProfile(rec.username, rec.wins, rec.losses, rec.draws, rec.elo);
 
         } catch (RemoteException e) {
             throw e;
         } catch (Exception e) {
-            throw new RemoteException("Register error: " + e.getMessage(), e);
+            throw new RemoteException("Lỗi đăng ký: " + e.getMessage(), e);
         }
     }
 

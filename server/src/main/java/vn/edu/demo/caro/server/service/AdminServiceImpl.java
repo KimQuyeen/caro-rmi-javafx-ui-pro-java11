@@ -8,13 +8,9 @@ import vn.edu.demo.caro.server.state.ServerState;
 import java.rmi.RemoteException;
 import java.rmi.server.UnicastRemoteObject;
 import java.sql.SQLException;
-import java.time.Instant;
-import java.time.temporal.ChronoUnit;
 import java.util.Comparator;
 import java.util.List;
 import java.util.stream.Collectors;
-
-import static vn.edu.demo.caro.common.model.Enums.RoomStatus;
 
 public class AdminServiceImpl extends UnicastRemoteObject implements AdminService {
     private final ServerState state;
@@ -55,8 +51,8 @@ public class AdminServiceImpl extends UnicastRemoteObject implements AdminServic
     @Override
     public void banUser(String username, String reason, int minutes) throws RemoteException {
         try {
-            Instant until = Instant.now().plus(minutes, ChronoUnit.MINUTES);
-            state.userDao.setBan(username, until, reason);
+            // [SỬA LỖI TẠI ĐÂY]: Gọi hàm banUser thay vì setBan
+            state.userDao.banUser(username, reason, minutes);
 
             var s = state.online.remove(username);
             if (s != null && s.callback != null) {
@@ -68,12 +64,11 @@ public class AdminServiceImpl extends UnicastRemoteObject implements AdminServic
     }
 
     private RoomInfo toInfo(Room r) {
-    return new RoomInfo(
-        r.id, r.name, r.owner,
-        2, r.players.size(), r.status, r.createdAt,
-        r.boardSize, r.blockTwoEnds,
-        r.hasPassword, r.timed, r.timeLimitSeconds
-    );
-}
-
+        return new RoomInfo(
+            r.id, r.name, r.owner,
+            2, r.players.size(), r.status, r.createdAt,
+            r.boardSize, r.blockTwoEnds,
+            r.hasPassword, r.timed, r.timeLimitSeconds
+        );
+    }
 }
