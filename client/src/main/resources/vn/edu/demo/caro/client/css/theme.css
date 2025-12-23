@@ -145,43 +145,60 @@
     -fx-cursor: hand;
 }
 /* Bubble chung */
-.chat-bubble {
-    -fx-background-radius: 14;
-    -fx-border-radius: 14;
-    -fx-max-width: 460;
-}
+/* ==================================================================
+   FIX CHAT UI - Thay thế đoạn cuối file app.css bằng đoạn này
+   ================================================================== */
 
-/* Tin nhắn của mình (bên phải) */
-.chat-me {
-    -fx-background-color: #2b79ff;
+/* 1. Tin nhắn CỦA MÌNH (Bên phải) */
+.chat-bubble-me {
+    -fx-background-color: #38bdf8; /* Màu xanh sáng chủ đạo */
+    -fx-background-radius: 14 14 0 14; /* Bo góc tạo hướng nói */
+    -fx-padding: 8 12;
+    -fx-effect: dropshadow(three-pass-box, rgba(0,0,0,0.2), 4, 0, 0, 2);
 }
-.chat-me .chat-text, .chat-me .chat-time {
-    -fx-text-fill: white;
+/* Chữ bên trong bubble của mình */
+.chat-bubble-me .chat-content {
+    -fx-text-fill: #0f172a; /* Chữ màu tối trên nền xanh */
+    -fx-font-size: 13px;
+    -fx-font-weight: 600;
 }
-
-/* Tin nhắn người khác (bên trái) */
-.chat-other {
-    -fx-background-color: #2f3440;
-}
-.chat-other .chat-from {
-    -fx-text-fill: #cbd5e1;
-}
-.chat-other .chat-text {
-    -fx-text-fill: white;
-}
-.chat-other .chat-time {
-    -fx-text-fill: #cbd5e1;
-    -fx-opacity: 0.85;
-}
-
-/* Meta */
-.chat-from {
+.chat-bubble-me .chat-from {
+    -fx-text-fill: #0f172a;
+    -fx-opacity: 0.7;
     -fx-font-size: 11px;
-    -fx-opacity: 0.95;
+    -fx-font-weight: 700;
 }
-.chat-text {
+.chat-bubble-me .chat-time {
+    -fx-text-fill: #0f172a;
+    -fx-opacity: 0.6;
+    -fx-font-size: 10px;
+}
+
+/* 2. Tin nhắn NGƯỜI KHÁC (Bên trái) */
+.chat-bubble-other {
+    -fx-background-color: #334155; /* Màu xám xanh đậm (Slate 700) - Tương phản tốt với nền #0f172a */
+    -fx-background-radius: 14 14 14 0;
+    -fx-padding: 8 12;
+    -fx-border-color: rgba(255,255,255,0.1);
+    -fx-border-width: 1;
+    -fx-effect: dropshadow(three-pass-box, rgba(0,0,0,0.2), 4, 0, 0, 2);
+}
+/* Chữ bên trong bubble người khác */
+.chat-bubble-other .chat-content {
+    -fx-text-fill: #f1f5f9; /* Chữ trắng sáng (Slate 100) - Rất rõ trên nền xám */
     -fx-font-size: 13px;
 }
-.chat-time {
+.chat-bubble-other .chat-from {
+    -fx-text-fill: #94a3b8; /* Tên người gửi màu xám nhạt */
+    -fx-font-size: 11px;
+    -fx-font-weight: 700;
+}
+.chat-bubble-other .chat-time {
+    -fx-text-fill: #64748b; /* Giờ gửi màu tối hơn chút */
     -fx-font-size: 10px;
+}
+
+/* Xóa các class cũ gây xung đột nếu còn sót lại ở phía trên file */
+.chat-other, .chat-me {
+    -fx-padding: 0; /* Reset */
 }

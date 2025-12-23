@@ -40,13 +40,15 @@ public interface LobbyService extends Remote {
     void makeMove(String roomId, String username, int row, int col) throws RemoteException;
     void resign(String roomId, String username) throws RemoteException;
 
+    void sendChallenge(String fromUser, String toUser) throws RemoteException;
+    void respondChallenge(String fromUser, String toUser, boolean accept) throws RemoteException;
     // Ranking
     List<UserProfile> getLeaderboard(int top) throws RemoteException;
 
     // Friends
     void sendFriendRequest(FriendRequest req) throws RemoteException;
     void respondFriendRequest(String from, String to, boolean accept) throws RemoteException;
-    List<String> getFriends(String username) throws RemoteException;
+    List<FriendInfo> getFriends(String username) throws RemoteException;
 
     // Server info
     List<String> listOnlineUsers() throws RemoteException;

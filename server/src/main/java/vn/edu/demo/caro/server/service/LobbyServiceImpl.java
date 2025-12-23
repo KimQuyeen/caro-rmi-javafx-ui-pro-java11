@@ -5,6 +5,7 @@ import vn.edu.demo.caro.common.model.Enums.GameEndReason;
 import vn.edu.demo.caro.common.model.Enums.Mark;
 import vn.edu.demo.caro.common.model.Enums.PostGameChoice;
 import vn.edu.demo.caro.common.model.Enums.RoomStatus;
+import vn.edu.demo.caro.common.model.Enums.UserStatus;
 import vn.edu.demo.caro.common.rmi.ClientCallback;
 import vn.edu.demo.caro.common.rmi.LobbyService;
 import vn.edu.demo.caro.server.dao.UserDao;
@@ -28,6 +29,7 @@ public class LobbyServiceImpl extends UnicastRemoteObject implements LobbyServic
 
     private final ServerState state;
 
+    
     private final ExecutorService callbackExecutor = Executors.newCachedThreadPool();
     // ===== Pending decisions (approval-based) =====
     private final Map<String, PendingDecision> pendingUndo = new HashMap<>();
@@ -172,8 +174,7 @@ private final Deque<ChatMessage> globalChatHistory = new ArrayDeque<>();
             callback.onOnlineUsersUpdated(sortedOnlineUsers());
             callback.onRoomListUpdated(allRoomsInfo());
             callback.onLeaderboardUpdated(state.userDao.topElo(50));
-            callback.onFriendListUpdated(state.friendDao.listFriends(username));
-
+            callback.onFriendListUpdated(getFriends(username)); // [ĐÚNG] Gọi hàm getFriends của chính class này
             broadcastOnlineUsers();
             return new UserProfile(rec.username, rec.wins, rec.losses, rec.draws, rec.elo);
         } catch (SQLException e) {
@@ -790,22 +791,99 @@ public synchronized void returnToLobby(String roomId, String from) throws Remote
             state.friendDao.resolveLatestPending(from, to, accept);
             if (accept) state.friendDao.addFriendPair(from, to);
 
-            safeCallback(from, cb -> cb.onFriendListUpdated(state.friendDao.listFriends(from)));
-            safeCallback(to, cb -> cb.onFriendListUpdated(state.friendDao.listFriends(to)));
+           // Lấy danh sách FriendInfo mới nhất rồi gửi về
+List<FriendInfo> friendsOfFrom = getFriends(from);
+safeCallback(from, cb -> cb.onFriendListUpdated(friendsOfFrom));
+
+List<FriendInfo> friendsOfTo = getFriends(to);
+safeCallback(to, cb -> cb.onFriendListUpdated(friendsOfTo));
         } catch (SQLException e) {
             throw new RemoteException("DB error: " + e.getMessage(), e);
         }
     }
 
-    @Override
-    public List<String> getFriends(String username) throws RemoteException {
+   @Override
+    public List<FriendInfo> getFriends(String username) throws RemoteException {
         try {
-            return state.friendDao.listFriends(username);
+            // Lấy list tên bạn bè từ DB
+            List<String> friendNames = state.friendDao.listFriends(username);
+            List<FriendInfo> result = new ArrayList<>();
+
+            for (String name : friendNames) {
+                UserStatus status = UserStatus.OFFLINE;
+
+                // 1. Check Online
+                if (state.online.containsKey(name)) {
+                    status = UserStatus.ONLINE; // Mặc định là Online rảnh
+
+                    // 2. Check Playing (Duyệt qua các phòng)
+                    for (Room r : state.rooms.values()) {
+                        if (r.status == RoomStatus.PLAYING && r.players.contains(name)) {
+                            status = UserStatus.PLAYING;
+                            break;
+                        }
+                    }
+                }
+                result.add(new FriendInfo(name, status));
+            }
+            return result;
         } catch (SQLException e) {
-            throw new RemoteException("DB error: " + e.getMessage(), e);
+            throw new RemoteException("Lỗi DB: " + e.getMessage(), e);
         }
     }
 
+    // ... (Các hàm khác giữ nguyên)
+
+    // [THÊM MỚI] Gửi lời thách đấu
+    @Override
+    public synchronized void sendChallenge(String from, String to) throws RemoteException {
+        requireOnline(from);
+        
+        // 1. Kiểm tra đối thủ có online không
+        if (!state.online.containsKey(to)) {
+            throw new RemoteException("Người chơi " + to + " hiện không online.");
+        }
+            
+        // 2. Kiểm tra đối thủ có đang bận chơi không
+        for (Room r : state.rooms.values()) {
+            if (r.status == RoomStatus.PLAYING && r.players.contains(to)) {
+                throw new RemoteException("Người chơi " + to + " đang trong trận đấu khác.");
+            }
+        }
+
+        // 3. Gửi callback hiển thị popup cho đối thủ
+        safeCallback(to, cb -> cb.onChallengeRequested(from));
+    }
+
+    // [THÊM MỚI] Phản hồi thách đấu (Đồng ý/Từ chối)
+    @Override
+    public synchronized void respondChallenge(String from, String to, boolean accept) throws RemoteException {
+        // from: Người nhận lời mời (vừa bấm nút)
+        // to: Người gửi lời mời ban đầu
+        
+        if (!accept) {
+            safeCallback(to, cb -> cb.onAnnouncement(from + " đã từ chối thách đấu."));
+            return;
+        }
+
+        // Nếu Đồng ý -> Server tự tạo phòng riêng và kéo cả 2 vào
+        RoomCreateRequest req = new RoomCreateRequest();
+        req.setRoomName("Thách đấu: " + to + " vs " + from);
+        req.setBoardSize(15);
+        req.setBlockTwoEnds(true); // Luật chặn 2 đầu cho kịch tính
+        req.setTimed(true);
+        req.setTimeLimitSeconds(30); // 30s suy nghĩ
+        req.setPasswordEnabled(true); 
+        req.setPassword(UUID.randomUUID().toString()); // Mật khẩu ngẫu nhiên để người lạ không vào được
+
+        // Người thách đấu (to) làm chủ phòng
+        String roomId = createRoom(to, req); 
+        
+        // Người nhận (from) tự động vào phòng luôn
+        joinRoom(from, roomId, req.getPassword()); 
+        
+        // Lưu ý: createRoom và joinRoom đã có logic gửi callback chuyển cảnh (showGame) cho Client rồi
+    }
     @Override
     public List<String> listOnlineUsers() throws RemoteException {
         return sortedOnlineUsers();
@@ -1303,5 +1381,6 @@ private FriendStatus computeFriendStatus(String requester, String target) throws
     if (state.friendDao.hasPendingRequest(target, requester)) return FriendStatus.INCOMING_PENDING;
     return FriendStatus.NOT_FRIEND;
 }
+
 
 }

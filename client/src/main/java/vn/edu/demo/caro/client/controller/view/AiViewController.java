@@ -20,15 +20,21 @@ public class AiViewController implements WithContext {
         cbFirst.getSelectionModel().select(0);
     }
 
-    @FXML private void onStartAi() {
-        int depth = cbDepth.getSelectionModel().getSelectedItem();
-        boolean aiFirst = cbFirst.getSelectionModel().getSelectedIndex() == 1;
+    @FXML 
+private void onStartAi() {
+    // 1. Lấy dữ liệu từ giao diện
+    Integer depth = cbDepth.getValue(); // Độ khó
+    boolean aiFirst = cbFirst.getSelectionModel().getSelectedIndex() == 1; // 0: Bạn, 1: AI
 
-        ctx.stage.getProperties().put("ai.enabled", true);
-        ctx.stage.getProperties().put("ai.depth", depth);
-        ctx.stage.getProperties().put("ai.aiFirst", aiFirst);
+    // 2. Lưu vào properties để GameController đọc
+    ctx.stage.getProperties().put("ai.enabled", true);
+    ctx.stage.getProperties().put("ai.depth", depth);
+    ctx.stage.getProperties().put("ai.first", aiFirst);
 
-        ctx.currentRoomId = "AI-OFFLINE";
-        ctx.sceneManager.showGame();
-    }
+    // 3. Đặt ID giả để không bị null pointer khi chat/vẽ bàn cờ
+    ctx.currentRoomId = "OFFLINE_AI"; 
+
+    // 4. Chuyển cảnh
+    ctx.sceneManager.showGame();
+}
 }

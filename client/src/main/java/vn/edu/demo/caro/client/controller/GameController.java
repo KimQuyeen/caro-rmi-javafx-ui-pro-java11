@@ -19,7 +19,8 @@ import vn.edu.demo.caro.common.model.Enums.GameEndReason;
 import vn.edu.demo.caro.common.model.Enums.Mark;
 import vn.edu.demo.caro.common.model.UserPublicProfile.FriendStatus;
 import vn.edu.demo.caro.common.model.*;
-
+import vn.edu.demo.caro.common.ai.MinimaxAI;
+import java.util.concurrent.Executors;
 import java.time.Instant;
 
 public class GameController implements WithContext {
@@ -43,6 +44,11 @@ public class GameController implements WithContext {
 
     @FXML private Label lbTimer;
 
+    
+    private MinimaxAI aiEngine;
+    private Mark aiMark; 
+// Dùng thread riêng cho AI nghĩ để không đơ màn hình
+    private final java.util.concurrent.ExecutorService aiExecutor = Executors.newSingleThreadExecutor();
     private javafx.animation.Timeline timerTimeline;
     private boolean timed;
     private long turnDeadlineMillis;
@@ -92,10 +98,49 @@ public class GameController implements WithContext {
         });
     }
 
-    @Override
+   @Override
     public void init(AppContext ctx) {
         this.ctx = ctx;
 
+        // Lấy cấu hình AI từ AiViewController
+        aiEnabled = (boolean) ctx.stage.getProperties().getOrDefault("ai.enabled", false);
+
+        if (aiEnabled) {
+            // --- SETUP CHẾ ĐỘ AI ---
+            // Lấy độ khó và ai đi trước (key phải khớp với AiViewController: "ai.depth", "ai.first")
+            int depth = (int) ctx.stage.getProperties().getOrDefault("ai.depth", 3);
+            boolean aiFirst = (boolean) ctx.stage.getProperties().getOrDefault("ai.first", false);
+            
+            aiEngine = new MinimaxAI(depth);
+            boardSize = 15;
+            setupBoard(boardSize);
+            finished = false;
+            
+            // Thiết lập quân cờ
+            if (aiFirst) {
+                // Máy đi trước => Máy X, Bạn O
+                myMark = Mark.O; 
+                aiMark = Mark.X; 
+                myTurn = false;
+                requestAiMove(); // Gọi máy đánh ngay nước đầu
+            } else {
+                // Bạn đi trước => Bạn X, Máy O
+                myMark = Mark.X; 
+                aiMark = Mark.O; 
+                myTurn = true;
+            }
+            
+            opponent = "AI (Level " + depth + ")";
+            if (lbMe != null) lbMe.setText("Bạn (" + myMark + ")");
+            if (lbOpponent != null) lbOpponent.setText(opponent);
+            
+            appendChat(new ChatMessage("SYSTEM", "AI", "Bắt đầu chơi với máy! Level " + depth, Instant.now()));
+            setBoardEnabled(myTurn);
+            refreshHeader();
+            return; // QUAN TRỌNG: Return luôn để không chạy logic Online bên dưới
+        }
+
+        // --- SETUP CHẾ ĐỘ ONLINE (Chỉ chạy khi aiEnabled = false) ---
         Object cbObj = ctx.stage.getProperties().get("callback");
         if (cbObj instanceof ClientCallbackImpl) {
             this.callback = (ClientCallbackImpl) cbObj;
@@ -107,15 +152,6 @@ public class GameController implements WithContext {
         if (btnUndo != null) btnUndo.setDisable(true);
         if (btnRedo != null) btnRedo.setDisable(true);
 
-        aiEnabled = (boolean) ctx.stage.getProperties().getOrDefault("ai.enabled", false);
-
-        if (aiEnabled) {
-            setupBoard(15);
-            appendChat(new ChatMessage("SYSTEM", "AI", "AI mode chưa được nối trong file này.", Instant.now()));
-            refreshHeader();
-            return;
-        }
-
         Object pending = ctx.stage.getProperties().remove("pending.gameStart");
         if (pending instanceof GameStart) {
             onGameStart((GameStart) pending);
@@ -126,6 +162,15 @@ public class GameController implements WithContext {
         }
     }
 
+    private boolean isBoardFull() {
+        if (board == null) return true;
+        for (int r = 0; r < boardSize; r++) {
+            for (int c = 0; c < boardSize; c++) {
+                if (board[r][c] == Mark.EMPTY) return false;
+            }
+        }
+        return true;
+    }
     // ============================================================
     // Click opponent (optional)
     // ============================================================
@@ -596,7 +641,37 @@ public class GameController implements WithContext {
     }
 
     private void onCellClick(int r, int c) {
-        if (finished || aiEnabled) return;
+        // CHỈNH SỬA: Chỉ return khi finished, KHÔNG chặn aiEnabled
+        if (finished) return;
+
+        // --- XỬ LÝ CHẾ ĐỘ AI ---
+        if (aiEnabled) {
+            // Nếu chưa tới lượt người (đang lượt máy) hoặc ô đã đánh -> Bỏ qua
+            if (!myTurn) return; 
+            if (board[r][c] != Mark.EMPTY) return;
+
+            // 1. Người đánh
+            applyLocalMove(r, c, myMark);
+
+            // 2. Kiểm tra người thắng chưa
+            if (vn.edu.demo.caro.common.util.GameRules.isWin(board, r, c, myMark)) {
+                endGameLocal("Bạn thắng rồi!");
+                return;
+            }
+            // Kiểm tra hòa
+            if (isBoardFull()) {
+                endGameLocal("Hòa! Bàn cờ đã đầy.", null);
+                return;
+            }
+
+            // 3. Chuyển lượt cho máy
+            myTurn = false;
+            setBoardEnabled(false); // Khóa bàn cờ để người chơi không click lung tung
+            requestAiMove();        // Gọi máy tính toán
+            return;
+        }
+
+        // --- XỬ LÝ CHẾ ĐỘ ONLINE (Giữ nguyên) ---
         if (!myTurn) return;
         if (ctx.currentRoomId == null || ctx.currentRoomId.isBlank()) return;
         if (r < 0 || c < 0 || r >= boardSize || c >= boardSize) return;
@@ -611,6 +686,72 @@ public class GameController implements WithContext {
 
         runRemote("makeMove", () -> ctx.lobby.makeMove(roomId, user, r, c));
     }
+   private void requestAiMove() {
+        // Chạy trong thread phụ để UI không bị đứng
+        aiExecutor.submit(() -> {
+            // --- XÓA HOẶC COMMENT DÒNG NÀY ---
+            // try { Thread.sleep(600); } catch (Exception e) {} 
+            // ----------------------------------
+
+            // Máy tính toán nước đi tốt nhất
+            MinimaxAI.AiMove best = aiEngine.bestMove(board, aiMark);
+
+            // Cập nhật lại UI (Bắt buộc dùng fx())
+            fx(() -> {
+                if (finished) return;
+                
+                // Máy đánh
+               applyLocalMove(best.row, best.col, aiMark);
+if (vn.edu.demo.caro.common.util.GameRules.isWin(board, best.row, best.col, aiMark)) {
+                    endGameLocal("Máy thắng! Gà quá ^^", aiMark);
+                } else {
+                    // Trả lượt cho người
+                    myTurn = true;
+                    setBoardEnabled(true);
+                }
+            });
+        });
+    }
+
+// Sửa lại hàm này để nhận 2 tham số: (String message, Mark winner)
+    private void endGameLocal(String message, Mark winner) {
+        finished = true;
+        setBoardEnabled(false);
+        
+        // Xác định kết quả để hiện lên Label phụ
+        String result;
+        if (winner == null) {
+            result = "Hòa";
+        } else if (winner == myMark) {
+            result = "Bạn Thắng";
+        } else {
+            result = "Máy Thắng";
+        }
+        
+        if (lbSub != null) lbSub.setText(result);
+        
+        // Thêm vào chat và hiện thông báo
+        appendChat(new ChatMessage("SYSTEM", "AI", message, Instant.now()));
+        showInfo("Kết thúc", message);
+    }
+
+private void applyLocalMove(int r, int c, Mark m) {
+    board[r][c] = m;
+    Button btn = cellButtons[r][c];
+    Label lb = cellMarks[r][c];
+    
+    // Vẽ giao diện
+    lb.setText(m == Mark.X ? "X" : "O");
+    lb.getStyleClass().removeAll("mark-x", "mark-o");
+    lb.getStyleClass().add(m == Mark.X ? "mark-x" : "mark-o");
+    
+    btn.setMouseTransparent(true); // Không cho click lại ô này
+}
+
+private void endGameLocal(String msg) {
+    finished = true;
+    showInfo("Kết thúc", msg);
+}
 
     private void setBoardEnabled(boolean enabled) {
         if (gridBoard != null) gridBoard.setDisable(!enabled);

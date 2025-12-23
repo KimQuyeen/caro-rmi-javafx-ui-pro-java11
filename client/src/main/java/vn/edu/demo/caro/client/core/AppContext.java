@@ -2,6 +2,7 @@ package vn.edu.demo.caro.client.core;
 
 import javafx.stage.Stage;
 import vn.edu.demo.caro.client.state.GlobalChatStore;
+import vn.edu.demo.caro.common.model.FriendInfo;
 import vn.edu.demo.caro.common.model.RoomInfo;
 import vn.edu.demo.caro.common.model.UserProfile;
 import vn.edu.demo.caro.common.rmi.LobbyService;
@@ -19,7 +20,7 @@ public class AppContext {
 
     public final CopyOnWriteArrayList<String> onlineUsers = new CopyOnWriteArrayList<>();
     public final CopyOnWriteArrayList<RoomInfo> rooms = new CopyOnWriteArrayList<>();
-    public final CopyOnWriteArrayList<String> friends = new CopyOnWriteArrayList<>();
+public final CopyOnWriteArrayList<FriendInfo> friends = new CopyOnWriteArrayList<>();
     public final CopyOnWriteArrayList<UserProfile> leaderboard = new CopyOnWriteArrayList<>();
 
     public volatile String currentRoomId;

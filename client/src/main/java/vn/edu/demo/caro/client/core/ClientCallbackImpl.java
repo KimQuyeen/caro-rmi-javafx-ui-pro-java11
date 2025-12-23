@@ -9,7 +9,8 @@ import vn.edu.demo.caro.client.controller.view.LeaderboardViewController;
 import vn.edu.demo.caro.client.controller.view.RoomsViewController;
 import vn.edu.demo.caro.common.model.*;
 import vn.edu.demo.caro.common.rmi.ClientCallback;
-
+import vn.edu.demo.caro.common.model.FriendInfo;
+import vn.edu.demo.caro.common.model.FriendRequest;
 import java.rmi.RemoteException;
 import java.rmi.server.UnicastRemoteObject;
 import java.util.List;
@@ -101,6 +102,36 @@ public class ClientCallbackImpl extends UnicastRemoteObject implements ClientCal
                 }
             });
         }
+    }
+    // [THÊM VÀO ClientCallbackImpl]
+    @Override
+    public void onChallengeRequested(String fromUser) throws RemoteException {
+        fx(() -> {
+            javafx.scene.control.Alert alert = new javafx.scene.control.Alert(javafx.scene.control.Alert.AlertType.CONFIRMATION);
+            alert.setTitle("Thách đấu!");
+            alert.setHeaderText("⚔️ LỜI THÁCH ĐẤU ⚔️");
+            alert.setContentText("Người chơi " + fromUser + " muốn thách đấu với bạn.\nBạn có dám nhận lời không?");
+
+            javafx.scene.control.ButtonType btnYes = new javafx.scene.control.ButtonType("Chiến luôn", javafx.scene.control.ButtonBar.ButtonData.YES);
+            javafx.scene.control.ButtonType btnNo = new javafx.scene.control.ButtonType("Sợ quá", javafx.scene.control.ButtonBar.ButtonData.NO);
+            
+            alert.getButtonTypes().setAll(btnYes, btnNo);
+
+            alert.showAndWait().ifPresent(type -> {
+                boolean accept = (type == btnYes);
+                
+                // Gửi câu trả lời về Server
+                if (ctx.io() != null) {
+                    ctx.io().execute(() -> {
+                        try {
+                            ctx.lobby.respondChallenge(ctx.username, fromUser, accept);
+                        } catch (Exception e) {
+                            e.printStackTrace();
+                        }
+                    });
+                }
+            });
+        });
     }
 
     private void scheduleSnapshotDrain() {
@@ -202,17 +233,15 @@ public class ClientCallbackImpl extends UnicastRemoteObject implements ClientCal
         });
     }
 
-    // -------- Friends --------
-    // @Override
-    // public void onFriendRequest(FriendRequest req) throws RemoteException {
-    //     fx(() -> { if (friendsController != null) friendsController.handleFriendRequest(req); });
-    // }
 
     @Override
-    public void onFriendListUpdated(List<String> friends) throws RemoteException {
+    public void onFriendListUpdated(List<FriendInfo> friends) throws RemoteException {
         fx(() -> {
             ctx.friends.clear();
-            if (friends != null) ctx.friends.addAll(friends);
+            if (friends != null) {
+                // Đảm bảo ctx.friends trong AppContext cũng là List<FriendInfo>
+                ctx.friends.addAll(friends); 
+            }
             if (friendsController != null) friendsController.refresh();
         });
     }

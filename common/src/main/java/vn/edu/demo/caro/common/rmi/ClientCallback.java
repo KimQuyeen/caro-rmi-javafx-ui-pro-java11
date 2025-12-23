@@ -7,7 +7,7 @@ import java.rmi.RemoteException;
 import java.util.List;
 
 public interface ClientCallback extends Remote {
-void onBoardReset(GameSnapshot snapshot) throws RemoteException;
+    void onBoardReset(GameSnapshot snapshot) throws RemoteException;
 
     // -------- Global events --------
     void onGlobalChat(ChatMessage msg) throws RemoteException;
@@ -19,19 +19,19 @@ void onBoardReset(GameSnapshot snapshot) throws RemoteException;
     void onOnlineUsersUpdated(List<String> users) throws RemoteException;
     void onLeaderboardUpdated(List<UserProfile> leaderboard) throws RemoteException;
 
-    // -------- Friends --------
+    // -------- Friends (Đã sửa) --------
     void onFriendRequest(FriendRequest req) throws RemoteException;
-    void onFriendListUpdated(List<String> friends) throws RemoteException;
+    void onFriendListUpdated(List<FriendInfo> friends) throws RemoteException;
 
-    // -------- Room chat (authoritative via server) --------
+    // -------- Room chat --------
     void onRoomChat(String roomId, ChatMessage msg) throws RemoteException;
 
-    // -------- Game (authoritative via server) --------
+    // -------- Game --------
     void onGameStarted(GameStart start) throws RemoteException;
     void onGameUpdated(GameUpdate update) throws RemoteException;
     void onGameEnded(GameEnd end) throws RemoteException;
 
-    // -------- Undo / Redo (request + result) --------
+    // -------- Undo / Redo --------
     void onUndoRequested(String roomId, String from) throws RemoteException;
     void onUndoResult(String roomId, boolean accepted, String message) throws RemoteException;
 
@@ -41,4 +41,7 @@ void onBoardReset(GameSnapshot snapshot) throws RemoteException;
     // -------- Rematch / Return to lobby --------
     void onRematchRequested(String roomId, String from) throws RemoteException;
     void onReturnToLobby(String roomId, String message) throws RemoteException;
+
+    // -------- Challenge --------
+    void onChallengeRequested(String fromUser) throws RemoteException;
 }
