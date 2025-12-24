@@ -16,7 +16,7 @@ public interface LobbyService extends Remote {
 
     
     // Auth
-    UserProfile register(String username, String password) throws RemoteException;
+    boolean register(String username, String password) throws RemoteException;
     UserProfile login(String username, String password, ClientCallback callback) throws RemoteException;
     void logout(String username) throws RemoteException;
 

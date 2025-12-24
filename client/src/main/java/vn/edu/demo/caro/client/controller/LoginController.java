@@ -4,7 +4,6 @@ import javafx.fxml.FXML;
 import javafx.scene.control.*;
 import vn.edu.demo.caro.client.core.*;
 import vn.edu.demo.caro.common.rmi.LobbyService;
-import vn.edu.demo.caro.client.core.RmiConfig;
 
 import java.rmi.registry.LocateRegistry;
 
@@ -63,41 +62,59 @@ public class LoginController implements WithContext {
             btnLogin.setDisable(false);
         }
     }
-@FXML
-private void onRegister() {
-    btnLogin.setDisable(true);
-    lbStatus.setText("Đang đăng ký...");
-    try {
-        String host = tfHost.getText().trim();
-        int port = Integer.parseInt(tfPort.getText().trim());
-        String name = tfName.getText().trim();
+// ... imports
 
-        var registry = LocateRegistry.getRegistry(host, port);
-        LobbyService lobby = (LobbyService) registry.lookup(name);
-        ctx.lobby = lobby;
+    @FXML
+    private void onRegister() {
+        btnLogin.setDisable(true); // Tạm khóa nút để tránh bấm nhiều lần
+        lbStatus.setText("Đang đăng ký...");
+        
+        try {
+            String host = tfHost.getText().trim();
+            int port = Integer.parseInt(tfPort.getText().trim());
+            String name = tfName.getText().trim();
 
-        String username = tfUsername.getText().trim();
-        String password = tfPassword.getText();
+            // Kết nối RMI (chỉ để đăng ký)
+            var registry = LocateRegistry.getRegistry(host, port);
+            LobbyService lobby = (LobbyService) registry.lookup(name);
+            
+            // Không gán ctx.lobby ở đây vội, để lúc login gán sau cũng được
+            // hoặc gán cũng không sao: ctx.lobby = lobby;
 
-        // gọi register
-        lobby.register(username, password);
+            String username = tfUsername.getText().trim();
+            String password = tfPassword.getText();
 
-        // sau khi register thì login để server lưu callback + online session
-        ClientCallbackImpl callback = new ClientCallbackImpl(ctx);
-        ctx.stage.getProperties().put("callback", callback);
+            // 1. Gọi register (Server trả về boolean)
+            boolean success = lobby.register(username, password);
 
-        ctx.username = username;
-        ctx.me = lobby.login(username, password, callback);
+            if (success) {
+                // 2. Thông báo thành công
+                lbStatus.setText("Đăng ký thành công! Vui lòng đăng nhập.");
+                
+                Alert alert = new Alert(Alert.AlertType.INFORMATION);
+                alert.setTitle("Thông báo");
+                alert.setHeaderText(null);
+                alert.setContentText("Đăng ký tài khoản [" + username + "] thành công.\nVui lòng nhấn Đăng nhập để vào game.");
+                alert.showAndWait();
 
-        lbStatus.setText("Đăng ký thành công. Đang vào sảnh...");
-        ctx.sceneManager.showMain();
+                // 3. Reset trạng thái để người dùng đăng nhập
+                // (Giữ nguyên username để tiện cho user, có thể xóa password nếu muốn bảo mật hơn)
+                // tfPassword.clear(); 
+            }
 
-    } catch (Exception e) {
-        lbStatus.setText("Lỗi đăng ký: " + e.getMessage());
-        btnLogin.setDisable(false);
+        } catch (Exception e) {
+            lbStatus.setText("Lỗi đăng ký: " + e.getMessage());
+            
+            Alert alert = new Alert(Alert.AlertType.ERROR);
+            alert.setTitle("Lỗi");
+            alert.setHeaderText("Đăng ký thất bại");
+            alert.setContentText(e.getMessage());
+            alert.showAndWait();
+        } finally {
+            // Mở lại nút login để người dùng bấm
+            btnLogin.setDisable(false);
+        }
     }
-}
-
 
 
 }

@@ -119,8 +119,11 @@ private final Deque<ChatMessage> globalChatHistory = new ArrayDeque<>();
     // ============================================================
     // Auth
     // ============================================================
+   // ... 
+
+    // [SỬA] Cập nhật logic hàm register
     @Override
-    public synchronized UserProfile register(String username, String password) throws RemoteException {
+    public synchronized boolean register(String username, String password) throws RemoteException {
         try {
             // 1. Validate dữ liệu đầu vào
             if (username == null || username.trim().isEmpty())
@@ -140,11 +143,8 @@ private final Deque<ChatMessage> globalChatHistory = new ArrayDeque<>();
             // 3. Tạo tài khoản trong DB
             state.userDao.create(username, password);
 
-            // 4. Trả về thông tin (nhưng KHÔNG add vào state.online)
-            var rec = state.userDao.find(username)
-                    .orElseThrow(() -> new RemoteException("Lỗi hệ thống: Không tìm thấy user vừa tạo."));
-
-            return new UserProfile(rec.username, rec.wins, rec.losses, rec.draws, rec.elo);
+            // 4. Trả về true (thay vì tìm lại user profile)
+            return true;
 
         } catch (RemoteException e) {
             throw e;
@@ -153,18 +153,22 @@ private final Deque<ChatMessage> globalChatHistory = new ArrayDeque<>();
         }
     }
 
-    @Override
+    // ...
+
+ @Override
     public synchronized UserProfile login(String username, String password, ClientCallback callback) throws RemoteException {
         try {
             Objects.requireNonNull(username);
             Objects.requireNonNull(password);
             Objects.requireNonNull(callback);
 
-            username = username.trim();
+            // [SỬA LỖI] Tạo biến finalUsername để dùng trong Lambda
+            final String finalUsername = username.trim(); 
 
-            state.userDao.ensureUser(username, password);
+            // 1. Kiểm tra User trong DB (Dùng finalUsername)
+            state.userDao.ensureUser(finalUsername, password);
 
-            var recOpt = state.userDao.find(username);
+            var recOpt = state.userDao.find(finalUsername);
             if (recOpt.isEmpty()) throw new RemoteException("Không đọc được user.");
 
             var rec = recOpt.get();
@@ -175,14 +179,29 @@ private final Deque<ChatMessage> globalChatHistory = new ArrayDeque<>();
                 throw new RemoteException("Tài khoản đang bị ban đến " + rec.bannedUntil + " | Lý do: " + rec.banReason);
             }
 
-            state.online.put(username, new vn.edu.demo.caro.server.state.OnlineSession(username, callback));
+            // 2. Lưu Session Online
+            state.online.put(finalUsername, new vn.edu.demo.caro.server.state.OnlineSession(finalUsername, callback));
 
-            callback.onOnlineUsersUpdated(sortedOnlineUsers());
-            callback.onRoomListUpdated(allRoomsInfo());
-            callback.onLeaderboardUpdated(state.userDao.topElo(50));
-            callback.onFriendListUpdated(getFriends(username)); // [ĐÚNG] Gọi hàm getFriends của chính class này
+            // [SỬA QUAN TRỌNG] Dùng finalUsername thay cho username trong các lambda bên dưới
+            
+            // Gửi danh sách user online
+            safeCallback(finalUsername, cb -> cb.onOnlineUsersUpdated(sortedOnlineUsers()));
+            
+            // Gửi danh sách phòng
+            safeCallback(finalUsername, cb -> cb.onRoomListUpdated(allRoomsInfo()));
+            
+            // Gửi bảng xếp hạng
+            safeCallback(finalUsername, cb -> cb.onLeaderboardUpdated(state.userDao.topElo(50)));
+            
+            // Gửi danh sách bạn bè (Lỗi cũ nằm ở dòng này do dùng username thường)
+            safeCallback(finalUsername, cb -> cb.onFriendListUpdated(getFriends(finalUsername)));
+
+            // Thông báo cho MỌI NGƯỜI là có người mới online
             broadcastOnlineUsers();
+
+            // 3. Trả về Profile
             return new UserProfile(rec.username, rec.wins, rec.losses, rec.draws, rec.elo);
+
         } catch (SQLException e) {
             throw new RemoteException("DB error: " + e.getMessage(), e);
         }
