@@ -18,7 +18,7 @@ public class MainController implements WithContext {
     @FXML private Label lbUser;
     @FXML private Label lbStatus;
     @FXML private StackPane contentPane;
-
+@FXML private Button btnSound;
     @FXML private Button btnRooms;
     @FXML private Button btnChat;
     @FXML private Button btnFriends;
@@ -47,7 +47,11 @@ public class MainController implements WithContext {
         btnLeaderboard.setOnAction(e -> onNavLeaderboard());
         btnAi.setOnAction(e -> onNavAi());
         btnLogout.setOnAction(e -> onLogout());
-
+       // [THÊM] Bật nhạc nền
+        SoundManager.getInstance().playBgm();
+        
+        // [THÊM] Cập nhật giao diện nút âm thanh theo trạng thái hiện tại
+        updateSoundButton();
         showView("rooms", "/vn/edu/demo/caro/client/fxml/views/rooms.fxml");
     }
 
@@ -62,7 +66,28 @@ public class MainController implements WithContext {
         ctx.username = null; ctx.me = null; ctx.currentRoomId = null;
         ctx.sceneManager.showLogin();
     }
+@FXML
+    private void onToggleSound() {
+        // Gọi hàm tắt/bật trong SoundManager
+        SoundManager.getInstance().toggleMute();
+        
+        // Cập nhật lại text của nút
+        updateSoundButton();
+    }
 
+    // Hàm cập nhật chữ trên nút (Bật hay Tắt)
+    private void updateSoundButton() {
+        if (btnSound == null) return;
+        
+        boolean isMuted = SoundManager.getInstance().isMuted();
+        if (isMuted) {
+            btnSound.setText("🔇 Âm thanh: Tắt");
+            btnSound.setStyle("-fx-opacity: 0.7;"); // Làm mờ chút cho biết đang tắt
+        } else {
+            btnSound.setText("🔊 Âm thanh: Bật");
+            btnSound.setStyle("-fx-opacity: 1.0;");
+        }
+    }
     public void pushStatus(String text) { lbStatus.setText(text); }
 
     private void showView(String key, String fxml) {

@@ -6,6 +6,7 @@ import javafx.fxml.FXML;
 import javafx.scene.control.*;
 import vn.edu.demo.caro.client.controller.view.cell.GlobalChatCell;
 import vn.edu.demo.caro.client.core.AppContext;
+import vn.edu.demo.caro.client.core.SoundManager; // [THÊM] Import SoundManager
 import vn.edu.demo.caro.client.core.WithContext;
 import vn.edu.demo.caro.common.model.ChatMessage;
 
@@ -35,11 +36,20 @@ public class ChatViewController implements WithContext {
         // Sử dụng Cell Factory để hiện tên/màu sắc đẹp hơn
         lvGlobalChat.setCellFactory(v -> new GlobalChatCell(ctx.username));
 
-        // Tự động cuộn xuống khi có tin nhắn mới
+        // Tự động cuộn xuống khi có tin nhắn mới + Phát âm thanh
         ctx.getGlobalChatStore().messages().addListener((ListChangeListener<ChatMessage>) c -> {
             boolean added = false;
             while (c.next()) {
-                if (c.wasAdded()) added = true;
+                if (c.wasAdded()) {
+                    added = true;
+
+                    // [THÊM] Kiểm tra và phát âm thanh nếu không phải tin nhắn của mình
+                    for (ChatMessage msg : c.getAddedSubList()) {
+                       if (!msg.getSender().equals(ctx.username)) {
+    vn.edu.demo.caro.client.core.SoundManager.getInstance().playNotify();
+}
+                    }
+                }
             }
             if (added) {
                 Platform.runLater(() -> lvGlobalChat.scrollTo(lvGlobalChat.getItems().size() - 1));

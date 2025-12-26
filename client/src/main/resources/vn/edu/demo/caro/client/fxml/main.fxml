@@ -24,7 +24,7 @@
                 <Button fx:id="btnFriends" text="  Bạn bè" styleClass="nav-btn"/>
                 <Button fx:id="btnLeaderboard" text="  Bảng xếp hạng" styleClass="nav-btn"/>
                 <Button fx:id="btnAi" text="  Chơi với máy (AI)" styleClass="nav-btn"/>
-
+<Button fx:id="btnSound" text="🔊 Âm thanh: Bật" onAction="#onToggleSound"/>
 
             </VBox>
 

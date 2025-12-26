@@ -105,8 +105,7 @@ public class FriendDao {
 
     public void resolveLatestPending(String fromUser, String toUser, boolean accept) throws SQLException {
         String status = accept ? "ACCEPTED" : "REJECTED";
-        String updateSql = "UPDATE friend_requests SET status = ?, updated_at = NOW() " +
-                           "WHERE from_user = ? AND to_user = ? AND status = 'PENDING'";
+        String updateSql = "UPDATE friend_requests SET status = ? WHERE from_user = ? AND to_user = ? AND status = 'PENDING'";
         
         try (Connection c = db.connect()) {
             boolean oldAutoCommit = c.getAutoCommit();

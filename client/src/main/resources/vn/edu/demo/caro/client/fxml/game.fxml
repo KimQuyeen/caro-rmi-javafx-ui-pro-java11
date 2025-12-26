@@ -4,74 +4,75 @@
 <?import javafx.scene.control.*?>
 <?import javafx.scene.layout.*?>
 
-<BorderPane xmlns="http://javafx.com/javafx/17" xmlns:fx="http://javafx.com/fxml/1"
-            fx:controller="vn.edu.demo.caro.client.controller.GameController" styleClass="app-bg">
+<StackPane xmlns="http://javafx.com/javafx/17" xmlns:fx="http://javafx.com/fxml/1"
+           fx:controller="vn.edu.demo.caro.client.controller.GameController"
+           fx:id="rootPane"
+           styleClass="app-bg">
 
-    <top>
-        <HBox spacing="10" alignment="CENTER_LEFT" styleClass="card">
-            <padding><Insets top="10" right="12" bottom="10" left="12"/></padding>
+    <BorderPane>
+        <top>
+            <HBox spacing="10" alignment="CENTER_LEFT" styleClass="card">
+                <padding><Insets top="10" right="12" bottom="10" left="12"/></padding>
 
-            <Button text="← Quay lại" onAction="#onBackToMain"/>
-            <Button fx:id="btnUndo" text="Undo" onAction="#onUndo"/>
-            <Button fx:id="btnRedo" text="Redo" onAction="#onRedo"/>
-            <Button text="Đầu hàng" onAction="#onResign" styleClass="danger"/>
+                <Button text="← Quay lại" onAction="#onBackToMain"/>
+                <Button fx:id="btnUndo" text="Undo" onAction="#onUndo"/>
+                <Button fx:id="btnRedo" text="Redo" onAction="#onRedo"/>
+                <Button text="Đầu hàng" onAction="#onResign" styleClass="danger"/>
+<Button fx:id="btnSound" text="🔊 Bật" onAction="#onToggleSound"/>
+                <Separator orientation="VERTICAL"/>
+                <VBox spacing="2">
+                    <Label fx:id="lbTitle" text="Caro" styleClass="h2"/>
+                    <Label fx:id="lbSub" text="Status" styleClass="muted"/>
+                    <Label fx:id="lbTimer" text="" styleClass="muted"/>
+                </VBox>
 
-            <Separator orientation="VERTICAL"/>
-            <VBox spacing="2">
-    <Label fx:id="lbTitle" text="Caro" styleClass="h2"/>
-    <Label fx:id="lbSub" text="Status" styleClass="muted"/>
-    <Label fx:id="lbTimer" text="" styleClass="muted"/>
-</VBox>
+                <Separator orientation="VERTICAL"/>
 
-<Separator orientation="VERTICAL"/>
+                <VBox spacing="2">
+                    <Label text="Trận đấu" styleClass="muted"/>
+                    <Label fx:id="lbMe" text="Bạn: ..." />
+                    <Label fx:id="lbOpponent"
+                           text="Đối thủ: ..."
+                           onMouseClicked="#onOpponentClicked"
+                           styleClass="clickable-label"/>
+                </VBox>
 
-<VBox spacing="2">
-    <Label text="Trận đấu" styleClass="muted"/>
-    <Label fx:id="lbMe" text="Bạn: ..." />
-    <Label fx:id="lbOpponent"
-           text="Đối thủ: ..."
-           onMouseClicked="#onOpponentClicked"
-           styleClass="clickable-label"/>
-</VBox>
+                <Region HBox.hgrow="ALWAYS"/>
+            </HBox>
+        </top>
 
-<Region HBox.hgrow="ALWAYS"/>
+        <center>
+            <HBox spacing="14">
+                <VBox spacing="10" styleClass="card-pad" HBox.hgrow="ALWAYS">
+                    <Label text="Bàn cờ" styleClass="h2"/>
 
-            <Region HBox.hgrow="ALWAYS"/>
-        </HBox>
-    </top>
+                    <ScrollPane fx:id="spBoard"
+                                fitToWidth="false"
+                                fitToHeight="false"
+                                pannable="true">
+                        <content>
+                            <GridPane fx:id="gridBoard" hgap="2" vgap="2">
+                                <padding>
+                                    <Insets top="10" right="10" bottom="10" left="10"/>
+                                </padding>
+                            </GridPane>
+                        </content>
+                    </ScrollPane>
+                </VBox>
 
-    <center>
-        <HBox spacing="14">
-            <VBox spacing="10" styleClass="card-pad" HBox.hgrow="ALWAYS">
-    <Label text="Bàn cờ" styleClass="h2"/>
+                <VBox spacing="10" prefWidth="360" styleClass="card-pad">
+                    <Label text="Chat" styleClass="h2"/>
+                    <ListView fx:id="lvChat" VBox.vgrow="ALWAYS"/>
 
-    <ScrollPane fx:id="spBoard"
-            fitToWidth="false"
-            fitToHeight="false"
-            pannable="true">
+                    <HBox spacing="8">
+                        <TextField fx:id="tfChat" promptText="Nhập tin nhắn..." HBox.hgrow="ALWAYS"/>
+                        <Button text="Gửi" onAction="#onSendChat" styleClass="primary"/>
+                    </HBox>
+                </VBox>
+            </HBox>
+        </center>
 
-        <content>
-            <GridPane fx:id="gridBoard" hgap="2" vgap="2">
-                <padding>
-                    <Insets top="10" right="10" bottom="10" left="10"/>
-                </padding>
-            </GridPane>
-        </content>
-    </ScrollPane>
-</VBox>
+        <padding><Insets top="18" right="18" bottom="18" left="18"/></padding>
+    </BorderPane>
 
-
-            <VBox spacing="10" prefWidth="360" styleClass="card-pad">
-                <Label text="Chat" styleClass="h2"/>
-                <ListView fx:id="lvChat" VBox.vgrow="ALWAYS"/>
-
-                <HBox spacing="8">
-                    <TextField fx:id="tfChat" promptText="Nhập tin nhắn..." HBox.hgrow="ALWAYS"/>
-                    <Button text="Gửi" onAction="#onSendChat" styleClass="primary"/>
-                </HBox>
-            </VBox>
-        </HBox>
-    </center>
-
-    <padding><Insets top="18" right="18" bottom="18" left="18"/></padding>
-</BorderPane>
+    </StackPane>

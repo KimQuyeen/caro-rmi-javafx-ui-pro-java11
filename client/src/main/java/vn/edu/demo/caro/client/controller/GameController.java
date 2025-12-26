@@ -1,6 +1,7 @@
 package vn.edu.demo.caro.client.controller;
 
 import javafx.animation.PauseTransition;
+import javafx.animation.ScaleTransition;
 import javafx.application.Platform;
 import javafx.collections.FXCollections;
 import javafx.collections.ObservableList;
@@ -8,12 +9,17 @@ import javafx.fxml.FXML;
 import javafx.geometry.Pos;
 import javafx.scene.Scene;
 import javafx.scene.control.*;
+import javafx.scene.effect.DropShadow;
 import javafx.scene.layout.*;
+import javafx.scene.paint.Color;
+import javafx.scene.text.Font;
+import javafx.scene.text.FontWeight;
 import javafx.stage.Modality;
 import javafx.stage.Stage;
 import javafx.util.Duration;
 import vn.edu.demo.caro.client.core.AppContext;
 import vn.edu.demo.caro.client.core.ClientCallbackImpl;
+import vn.edu.demo.caro.client.core.SoundManager;
 import vn.edu.demo.caro.client.core.WithContext;
 import vn.edu.demo.caro.common.model.Enums.GameEndReason;
 import vn.edu.demo.caro.common.model.Enums.Mark;
@@ -30,7 +36,7 @@ public class GameController implements WithContext {
 
     @FXML private Label lbMe;
     @FXML private Label lbOpponent;
-
+@FXML private javafx.scene.layout.StackPane rootPane;
     @FXML private Label lbTitle;
     @FXML private Label lbSub;
     @FXML private GridPane gridBoard;
@@ -43,7 +49,7 @@ public class GameController implements WithContext {
     @FXML private Button btnRedo;
 
     @FXML private Label lbTimer;
-
+@FXML private Button btnSound;
     
     private MinimaxAI aiEngine;
     private Mark aiMark; 
@@ -101,7 +107,7 @@ public class GameController implements WithContext {
    @Override
     public void init(AppContext ctx) {
         this.ctx = ctx;
-
+updateSoundButton();
         // Lấy cấu hình AI từ AiViewController
         aiEnabled = (boolean) ctx.stage.getProperties().getOrDefault("ai.enabled", false);
 
@@ -159,6 +165,24 @@ public class GameController implements WithContext {
             setupBoard(15);
             appendChat(new ChatMessage("SYSTEM", "ROOM", "Đang chờ đủ 2 người để bắt đầu...", Instant.now()));
             refreshHeader();
+        }
+    }
+    @FXML
+    private void onToggleSound() {
+        SoundManager.getInstance().toggleMute();
+        updateSoundButton();
+    }
+
+    // [THÊM] Hàm cập nhật giao diện nút âm thanh
+    private void updateSoundButton() {
+        if (btnSound == null) return;
+        boolean isMuted = SoundManager.getInstance().isMuted();
+        if (isMuted) {
+            btnSound.setText("🔇 Tắt");
+            btnSound.setStyle("-fx-opacity: 0.7;");
+        } else {
+            btnSound.setText("🔊 Bật");
+            btnSound.setStyle("-fx-opacity: 1.0;");
         }
     }
 
@@ -437,6 +461,18 @@ public class GameController implements WithContext {
             });
             pt.play();
         });
+
+        if (end.getWinner() == null) {
+            // Hòa
+            SoundManager.getInstance().playNotify();
+        } else if (end.getWinner().equals(ctx.username)) {
+            // Mình thắng -> Nhạc thắng + Hiệu ứng
+            SoundManager.getInstance().playWin();
+            showVictoryEffect(); // Gọi hàm hiệu ứng (viết ở dưới)
+        } else {
+            // Mình thua
+            SoundManager.getInstance().playLose();
+        }
     }
 
     public void onRoomChat(ChatMessage msg) {
@@ -999,5 +1035,52 @@ private void endGameLocal(String msg) {
         if (end.getReason() == GameEndReason.DRAW) return "Kết thúc: Hòa.";
         if (end.getWinner() == null) return "Kết thúc.";
         return "Kết thúc: " + end.getWinner() + " thắng. (" + end.getReason() + ")";
+    }
+
+
+    private void showVictoryEffect() {
+        Platform.runLater(() -> {
+            // 1. Tạo chữ VICTORY
+            Label lblVictory = new Label("VICTORY!");
+            lblVictory.setFont(Font.font("Arial", FontWeight.BOLD, 80));
+            lblVictory.setTextFill(Color.GOLD);
+            lblVictory.setStyle("-fx-background-color: rgba(0,0,0,0.6); -fx-padding: 20; -fx-background-radius: 20;");
+
+            // Đổ bóng đỏ
+            DropShadow ds = new DropShadow();
+            ds.setColor(Color.RED);
+            ds.setRadius(10);
+            lblVictory.setEffect(ds);
+
+            // 2. Thêm vào giao diện (rootPane là fx:id của layout cha trong game.fxml)
+            // Nếu bạn chưa có fx:id, hãy thêm vào fxml hoặc gán tạm vào pane chứa bàn cờ
+            if (rootPane != null) {
+                rootPane.getChildren().add(lblVictory);
+            }
+
+            // 3. Hiệu ứng phóng to
+            lblVictory.setScaleX(0); 
+            lblVictory.setScaleY(0);
+
+            ScaleTransition st = new ScaleTransition(Duration.millis(500), lblVictory);
+            st.setFromX(0); st.setFromY(0);
+            st.setToX(1.5); st.setToY(1.5);
+            st.setCycleCount(2);
+            st.setAutoReverse(true);
+            
+            st.setOnFinished(e -> {
+                // Hiện xong 3 giây thì tự biến mất và bật lại nhạc nền
+                new java.util.Timer().schedule(new java.util.TimerTask() {
+                    @Override
+                    public void run() {
+                        Platform.runLater(() -> {
+                            if(rootPane != null) rootPane.getChildren().remove(lblVictory);
+                            SoundManager.getInstance().playBgm();
+                        });
+                    }
+                }, 3000);
+            });
+            st.play();
+        });
     }
 }
